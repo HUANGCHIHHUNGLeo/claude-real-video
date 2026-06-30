@@ -122,8 +122,15 @@ print(r.frame_count, r.transcript_path)
 2. **Scene frames** — `ffmpeg select='gt(scene,…)'` grabs each visual change.
 3. **Density floor** — also samples every `--fps-floor` seconds so nothing slips through.
 4. **Dedup** — average-hash drops near-identical frames (a static screen → one frame).
-5. **Transcribe** — extract audio + Whisper (optional; skipped cleanly if the video has no audio).
+5. **Text** — if the video **already has subtitles** (a sidecar `.srt`/`.vtt` next to a
+   local file, or an embedded subtitle track), those are used as the transcript —
+   faster and more accurate than re-transcribing. Only when there are no subtitles
+   does it fall back to **Whisper** on the audio (skipped cleanly if there's no audio).
 6. **Manifest** — `MANIFEST.txt` summarises everything for the model.
+
+The transcript is plain text the model can read. The tool **doesn't burn subtitles
+into the video** — burning is a presentation choice, not something needed to make a
+video AI-readable.
 
 ---
 

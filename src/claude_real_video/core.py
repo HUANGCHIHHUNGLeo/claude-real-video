@@ -3,6 +3,7 @@ frames, optionally transcribe audio, and write a manifest an LLM can read."""
 from __future__ import annotations
 import glob
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -124,6 +125,63 @@ def dedup_frames(frames_dir: str, threshold: int = 8) -> int:
     return len(kept)
 
 
+def _has_subtitle_stream(video: str) -> bool:
+    r = _run(["ffprobe", "-v", "error", "-select_streams", "s",
+              "-show_entries", "stream=index", "-of", "csv=p=0", video])
+    return bool(r.stdout.strip())
+
+
+def _subs_to_text(sub_path: str, out_txt: str) -> str | None:
+    """Convert an .srt/.vtt subtitle file to plain text (drop indices,
+    timecodes and styling tags). Returns out_txt on success."""
+    try:
+        raw = open(sub_path, encoding="utf-8", errors="ignore").read()
+    except OSError:
+        return None
+    lines: list[str] = []
+    for ln in raw.splitlines():
+        s = ln.strip().lstrip("﻿").strip()  # drop BOM if present
+        if not s or s.startswith("WEBVTT") or s.isdigit() or "-->" in s:
+            continue
+        s = re.sub(r"<[^>]+>", "", s)  # strip vtt inline tags like <v ->
+        if s:
+            lines.append(s)
+    text = "\n".join(lines).strip()
+    if not text:
+        return None
+    open(out_txt, "w", encoding="utf-8").write(text + "\n")
+    return out_txt
+
+
+def existing_subtitles(src: str, video: str, out_dir: str) -> str | None:
+    """Use subtitles the video already ships with, instead of re-transcribing.
+    Checks (1) a sidecar .srt/.vtt next to a local source file, then
+    (2) an embedded subtitle stream. Returns the transcript path, or None.
+    This is faster and more accurate than Whisper when captions already exist."""
+    dst = os.path.join(out_dir, "transcript.txt")
+    # 1) sidecar file next to the original source (local files only)
+    if not src.startswith(("http://", "https://")):
+        base = os.path.splitext(src)[0]
+        for ext in (".srt", ".vtt"):
+            cand = base + ext
+            if os.path.exists(cand) and _subs_to_text(cand, dst):
+                return dst
+    # 2) embedded subtitle stream
+    if _has_subtitle_stream(video):
+        raw = os.path.join(out_dir, "_embedded.srt")
+        _run(["ffmpeg", "-y", "-i", video, "-map", "0:s:0", raw,
+              "-hide_banner", "-loglevel", "error"])
+        if os.path.exists(raw):
+            ok = _subs_to_text(raw, dst)
+            try:
+                os.remove(raw)
+            except OSError:
+                pass
+            if ok:
+                return dst
+    return None
+
+
 def transcribe(video: str, out_dir: str, lang: str | None) -> str | None:
     """Optional: extract audio + run Whisper if the `whisper` CLI is installed."""
     if not _have("whisper"):
@@ -155,18 +213,21 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     scene_n, _ = extract_frames(video, frames_dir, scene, fps_floor, max_frames)
     kept = dedup_frames(frames_dir, dedup_threshold)
 
-    # Transcribe, but be honest about *why* there's no transcript — a silent video
-    # is not the same as a missing whisper install.
+    # Text for the LLM: prefer subtitles the video already has (faster + more
+    # accurate); only fall back to Whisper when there are none. Be honest about
+    # *why* there's no transcript — a silent video is not a missing whisper install.
     transcript = None
     if not do_transcribe:
         note = "(skipped: --no-transcribe)"
+    elif (transcript := existing_subtitles(src, video, out_dir)):
+        note = f"{transcript} (from the video's own subtitles)"
     elif not _have("whisper"):
-        note = "(none — install the whisper CLI to enable: pip install openai-whisper)"
+        note = "(none — no existing subtitles; install whisper to transcribe: pip install openai-whisper)"
     elif not _has_audio(video):
-        note = "(none — this video has no audio track)"
+        note = "(none — this video has no subtitles and no audio track)"
     else:
         transcript = transcribe(video, out_dir, lang)
-        note = transcript if transcript else "(none — transcription failed)"
+        note = f"{transcript} (transcribed by whisper)" if transcript else "(none — transcription failed)"
 
     manifest = os.path.join(out_dir, "MANIFEST.txt")
     lines = [
