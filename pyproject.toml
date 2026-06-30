@@ -30,8 +30,8 @@ claude-real-video = "claude_real_video.cli:main"
 crv = "claude_real_video.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/leoaido/claude-real-video"
-Issues = "https://github.com/leoaido/claude-real-video/issues"
+Homepage = "https://github.com/HUANGCHIHHUNGLeo/claude-real-video"
+Issues = "https://github.com/HUANGCHIHHUNGLeo/claude-real-video/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
