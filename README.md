@@ -21,6 +21,9 @@ crv "https://www.youtube.com/watch?v=..."
 
 Then drop the frames + `MANIFEST.txt` into Claude / ChatGPT / Gemini and ask away.
 
+Not doing LLM work? It also works as a **general-purpose video keyframe extractor** —
+scene-change detection + dedup, no ML models to download.
+
 **New in 0.3.0** — tell it *why* you're watching, and keep what it finds:
 
 ```bash
