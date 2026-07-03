@@ -24,6 +24,15 @@ Then drop the frames + `MANIFEST.txt` into Claude / ChatGPT / Gemini and ask awa
 Not doing LLM work? It also works as a **general-purpose video keyframe extractor** —
 scene-change detection + dedup, no ML models to download.
 
+**Using Claude Code?** Install it as a skill so Claude watches videos on its own:
+
+```bash
+pip install claude-real-video
+mkdir -p ~/.claude/skills && cp -r skills/claude-real-video ~/.claude/skills/
+```
+
+Then just paste a video link into Claude Code and ask about it.
+
 **New in 0.3.0** — tell it *why* you're watching, and keep what it finds:
 
 ```bash
