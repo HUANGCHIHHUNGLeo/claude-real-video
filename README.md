@@ -2,6 +2,8 @@
 
 **Let Claude — or any LLM — actually watch a video.**
 
+![demo](docs/demo.gif)
+
 Most AI tools don't really *see* a video. Paste a YouTube link into ChatGPT and it
 reads the **transcript**, not the picture. Claude won't take a video file at all.
 Even Gemini, which *can* read video natively, has to send it up to Google and
