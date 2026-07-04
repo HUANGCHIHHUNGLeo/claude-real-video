@@ -12,7 +12,7 @@ The user gives you a video (URL or file path) and asks what's in it, to summariz
 ## Requirements
 
 - `pip install claude-real-video` (installs the `crv` CLI; needs Python 3.10+ and ffmpeg)
-- First transcription downloads a faster-whisper model automatically
+- First transcription downloads an openai-whisper base model (~139 MB) automatically
 
 ## Steps
 
