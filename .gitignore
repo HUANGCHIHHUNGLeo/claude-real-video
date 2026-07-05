@@ -10,3 +10,4 @@ crv-out/
 *.jpg
 !docs/*.jpg
 .gstack/
+dist*/
