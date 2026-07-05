@@ -279,7 +279,7 @@ def extract_full_audio(video: str, out_dir: str) -> str | None:
     return dst if os.path.exists(dst) and os.path.getsize(dst) > 0 else None
 
 
-def transcribe(video: str, out_dir: str, lang: str | None) -> str | None:
+def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base") -> str | None:
     """Optional: extract audio + run Whisper if the `whisper` CLI is installed."""
     if not _have("whisper"):
         return None
@@ -288,7 +288,7 @@ def transcribe(video: str, out_dir: str, lang: str | None) -> str | None:
           "-hide_banner", "-loglevel", "error"])
     if not os.path.exists(wav):
         return None
-    cmd = ["whisper", wav, "--model", "base", "--output_format", "txt", "--output_dir", out_dir]
+    cmd = ["whisper", wav, "--model", model, "--output_format", "txt", "--output_dir", out_dir]
     if lang and lang != "auto":
         cmd += ["--language", lang]
     _run(cmd)
@@ -348,7 +348,7 @@ def save_to_kb(kb_dir: str, manifest_path: str, src: str) -> str:
 def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1.0,
             max_frames: int = 150, lang: str | None = "auto", cookies: str | None = None,
             do_transcribe: bool = True, dedup_threshold: float = 8, dedup_window: int = 4,
-            keep_audio: bool = False, report: bool = False, why: str | None = None) -> Result:
+            keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base") -> Result:
     os.makedirs(out_dir, exist_ok=True)
     frames_dir = os.path.join(out_dir, "frames")
     video = fetch_video(src, out_dir, cookies=cookies)
@@ -371,7 +371,7 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     elif not _has_audio(video):
         note = "(none — this video has no subtitles and no audio track)"
     else:
-        transcript = transcribe(video, out_dir, lang)
+        transcript = transcribe(video, out_dir, lang, model=whisper_model)
         note = f"{transcript} (transcribed by whisper)" if transcript else "(none — transcription failed)"
 
     # Optionally keep the full original soundtrack (music + speech + effects) for

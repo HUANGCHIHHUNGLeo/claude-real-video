@@ -22,6 +22,10 @@ def main() -> None:
     ap.add_argument("--cookies", default=None,
                     help="Netscape cookie file for sites that need login (your own, authorised use only)")
     ap.add_argument("--no-transcribe", action="store_true", help="Skip audio transcription")
+    ap.add_argument("--whisper-model", default="base",
+                    choices=["tiny", "base", "small", "medium", "large"],
+                    help="Whisper model for transcription (default: base — fast; "
+                         "pick medium/large for tricky audio, they download more and run slower)")
     ap.add_argument("--dedup-threshold", type=float, default=8,
                     help="Percent of pixels that must change for a frame to count as new; "
                          "higher = fewer frames kept (default: 8)")
@@ -53,7 +57,8 @@ def main() -> None:
             args.source, args.out,
             scene=args.scene, fps_floor=args.fps_floor, max_frames=args.max_frames,
             lang=args.lang, cookies=args.cookies,
-            do_transcribe=not args.no_transcribe, dedup_threshold=args.dedup_threshold,
+            do_transcribe=not args.no_transcribe,
+            whisper_model=args.whisper_model, dedup_threshold=args.dedup_threshold,
             dedup_window=args.dedup_window, keep_audio=args.keep_audio, report=args.report,
             why=args.why,
         )
