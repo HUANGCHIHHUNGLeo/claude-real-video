@@ -15,7 +15,7 @@ reads the **transcript**, not the picture. Claude won't take a video file at all
 Even Gemini, which *can* read video natively, has to send it up to Google and
 samples frames at a **fixed interval** (1 fps by default), so fast cuts slip past.
 
-`claude-real-video` does it differently, and **locally**: point it at a URL or a
+`claude-real-video` does it differently, and **the processing runs locally**: point it at a URL or a
 file, and it pulls the frames that *actually matter* (every scene change, not a
 fixed quota), throws away the near-duplicates, transcribes the audio, and hands
 you a clean folder any LLM can read. All the processing happens on your own machine — what gets sent anywhere is only the frames/text *you* choose to paste into an LLM afterwards.
@@ -211,7 +211,7 @@ This free tool tells an LLM **what** is on screen. A stack of keyframes can't te
 
 **Recent Pro updates** (July 2026): a music-state timeline (hear the score building, peaking, falling away — with BPM), voice emotion read from the isolated voice instead of the full mix, an interactive `--viewer` dashboard with a clickable synced timeline, and richer gesture narration ("hand raised — right hand, while walking toward frame right").
 
-All as plain text in the same manifest, still 100% local. One-time founder price $19 → **https://leoaido.com/crv-pro/**
+All as plain text in the same manifest, all computed on your machine. One-time founder price $19 → **https://leoaido.com/crv-pro/**
 
 ## License
 
