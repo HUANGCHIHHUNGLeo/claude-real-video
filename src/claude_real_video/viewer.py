@@ -39,7 +39,7 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
   header .b {{ color:#f0b429; font-weight:700 }}
   header .r {{ color:#8a7a5f; font-size:12px }}
   main {{ max-width:1500px; margin:0 auto; padding:0 24px; display:grid; grid-template-columns:1.1fr 1fr; gap:20px }}
-  video {{ width:100%; border-radius:12px; border:1px solid #3a3323; background:#000 }}
+  video {{ width:100%; max-height:70vh; object-fit:contain; border-radius:12px; border:1px solid #3a3323; background:#000 }}
   h2 {{ font-size:12px; color:#8a7a5f; letter-spacing:.1em; margin:16px 0 10px }}
   .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px }}
   .grid a {{ position:relative; display:block; border:1px solid #2a2418; border-radius:8px; overflow:hidden }}
