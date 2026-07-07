@@ -162,13 +162,13 @@ When a user shares a video (URL or file path):
 | `--no-transcribe` | off | Skip audio transcription |
 | `--viewer` | off | Write a local `viewer.html` |
 | `--whisper-model` | `base` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large`) |
-| `--dedup-threshold` | `8` | % of pixels that must change for a new frame |
-| `--dedup-window` | `4` | Compare against last N kept frames |
+| `--dedup-threshold` | `8` | % of pixels that must change for a new frame (higher = fewer frames kept) |
+| `--dedup-window` | `4` | Compare against last N kept frames (1 = consecutive-only) |
 | `--report` | off | Keep dropped frames + write `report.html` |
-| `--why` | — | Viewing intent string, written into MANIFEST.txt |
+| `--why` | — | Viewing intent, e.g. `--why "find the pricing strategy"` — focuses the model's analysis |
 | `--grid` | off | Tile frames into 3x3 contact sheets |
 | `--kb` | — | Save as dated markdown note to knowledge-base folder |
-| `--keep-audio` | off | Save full original soundtrack as `audio.m4a` |
+| `--keep-audio` | off | Save full soundtrack as `audio.m4a` (for Gemini, GPT-4o, etc.) |
 
 ## Python API
 
