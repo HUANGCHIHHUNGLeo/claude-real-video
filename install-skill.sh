@@ -183,7 +183,7 @@ for i in "${SELECTED_IDX[@]}"; do
 
     ln -s "$DEFAULT_INSTALL_DIR/$SKILL_NAME" "$target_link"
     ok "Symlinked → $platform ($target_link)"
-    ((LINK_COUNT++))
+    LINK_COUNT=$((LINK_COUNT + 1))
 done
 
 echo ""
