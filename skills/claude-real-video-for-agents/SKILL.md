@@ -156,6 +156,7 @@ When a user shares a video (URL or file path):
 | `--fps-floor` | `1.0` | Guarantee at least one frame every N seconds |
 | `--max-frames` | `150` | Hard cap on total frames |
 | `--adaptive` | off | Adaptive scene detection for slow-changing content |
+| `--text-anchors` | off | Force frames at subtitle-cue timestamps (captions, slides, screen recordings) |
 | `--lang` | `auto` | Whisper language (`en`, `zh`, `auto`, etc.) |
 | `--cookies` | — | Netscape cookie file for login-gated sources |
 | `--cookies-from-browser` | — | Read cookies from browser (`chrome`, `safari`, `firefox`, `edge`) |

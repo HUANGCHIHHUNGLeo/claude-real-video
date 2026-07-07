@@ -23,6 +23,11 @@ def main() -> None:
                     help="Adaptive scene detection: catches slow morphs (2-3s squash/stretch, "
                          "gradual pans) a fixed threshold misses, by comparing each frame "
                          "against its rolling neighbourhood instead of a constant")
+    ap.add_argument("--text-anchors", action="store_true",
+                    help="Force extra frames at subtitle-cue timestamps (sidecar .srt/.vtt "
+                         "or embedded track) — for videos where meaning changes faster than "
+                         "pixels: burned-in captions, lecture slides, screen recordings. "
+                         "At most one forced frame per second; scene detection unchanged")
     ap.add_argument("--lang", default="auto", help="Whisper language, e.g. en / zh / auto (default: auto)")
     ap.add_argument("--cookies", default=None,
                     help="Netscape cookie file for sites that need login (your own, authorised use only)")
@@ -66,7 +71,8 @@ def main() -> None:
     try:
         r = process(
             args.source, args.out,
-            scene=args.scene, adaptive=args.adaptive, fps_floor=args.fps_floor, max_frames=args.max_frames,
+            scene=args.scene, adaptive=args.adaptive, text_anchors=args.text_anchors,
+            fps_floor=args.fps_floor, max_frames=args.max_frames,
             lang=args.lang, cookies=args.cookies, cookies_from_browser=args.cookies_from_browser,
             do_transcribe=not args.no_transcribe,
             whisper_model=args.whisper_model, dedup_threshold=args.dedup_threshold,

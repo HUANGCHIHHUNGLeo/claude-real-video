@@ -86,15 +86,21 @@ def _fps(video: str) -> float:
         return 25.0
 
 
-def extract_frames(video: str, frames_dir: str, scene: float, fps_floor: float) -> int:
+def extract_frames(video: str, frames_dir: str, scene: float, fps_floor: float,
+                   anchors: list[int] | None = None) -> int:
     """One chronological pass: every scene change OR one frame per `fps_floor`
     seconds, whichever comes first. A single select filter keeps the frames in
     time order, so dedup compares true neighbours (two passes used to interleave
-    scene_/floor_ files out of order). Returns the extracted count."""
+    scene_/floor_ files out of order). `anchors` are extra frame numbers forced
+    into the same pass (text-anchored extraction, issue #5) so ordering — and
+    therefore dedup — still holds. Returns the extracted count."""
     os.makedirs(frames_dir, exist_ok=True)
     every_n = max(1, round(_fps(video) * fps_floor))
+    sel = f"gt(scene,{scene})+not(mod(n,{every_n}))"
+    if anchors:
+        sel += "+" + "+".join(f"eq(n,{n})" for n in anchors)
     _run(["ffmpeg", "-i", video,
-          "-vf", f"select='gt(scene,{scene})+not(mod(n,{every_n}))',scale=640:-1",
+          "-vf", f"select='{sel}',scale=640:-1",
           "-vsync", "vfr", os.path.join(frames_dir, "raw_%05d.jpg"),
           "-hide_banner", "-loglevel", "error"])
     return len(glob.glob(os.path.join(frames_dir, "raw_*.jpg")))
@@ -130,7 +136,8 @@ def _scene_scores(video: str) -> list[tuple[int, float]]:
 
 def extract_frames_adaptive(video: str, frames_dir: str, fps_floor: float,
                             window_s: float = 2.0, mult: float = 3.0,
-                            min_content: float = 0.04) -> int:
+                            min_content: float = 0.04,
+                            anchors: list[int] | None = None) -> int:
     """Adaptive extraction for slow-changing content (issue #2): a frame is a
     keyframe when its scene score exceeds `mult` x the rolling average of the
     previous `window_s` seconds AND an absolute floor `min_content` — so gradual
@@ -140,7 +147,7 @@ def extract_frames_adaptive(video: str, frames_dir: str, fps_floor: float,
     the score pass yields nothing (e.g. single-frame or still videos)."""
     scores = _scene_scores(video)
     if not scores:
-        return extract_frames(video, frames_dir, 0.30, fps_floor)
+        return extract_frames(video, frames_dir, 0.30, fps_floor, anchors=anchors)
     fps = _fps(video)
     win = max(1, round(fps * window_s))
     every_n = max(1, round(fps * fps_floor))
@@ -156,7 +163,9 @@ def extract_frames_adaptive(video: str, frames_dir: str, fps_floor: float,
         if len(rolling) > win:
             rolling.pop(0)
     if not picked:
-        return extract_frames(video, frames_dir, 0.30, fps_floor)
+        return extract_frames(video, frames_dir, 0.30, fps_floor, anchors=anchors)
+    if anchors:
+        picked = sorted(set(picked) | set(anchors))
     os.makedirs(frames_dir, exist_ok=True)
     expr = "+".join(f"eq(n,{n})" for n in picked)
     _run(["ffmpeg", "-i", video,
@@ -329,6 +338,59 @@ def existing_subtitles(src: str, video: str, out_dir: str) -> str | None:
     return None
 
 
+def _subtitle_cue_times(src: str, video: str, out_dir: str) -> list[float]:
+    """Start time (seconds) of every subtitle cue — from a sidecar .srt/.vtt
+    next to a local source first, else the embedded subtitle stream (same
+    lookup order as existing_subtitles). Empty list when the video ships no
+    captions; OCR of burned-in text is deliberately out of scope (issue #5
+    is subtitle-timestamp-driven only, phase 1)."""
+    sub_path, cleanup = None, False
+    if not src.startswith(("http://", "https://")):
+        base = os.path.splitext(src)[0]
+        for ext in (".srt", ".vtt"):
+            if os.path.exists(base + ext):
+                sub_path = base + ext
+                break
+    if sub_path is None and _has_subtitle_stream(video):
+        sub_path = os.path.join(out_dir, "_cues.srt")
+        _run(["ffmpeg", "-y", "-i", video, "-map", "0:s:0", sub_path,
+              "-hide_banner", "-loglevel", "error"])
+        cleanup = True
+        if not os.path.exists(sub_path):
+            return []
+    if sub_path is None:
+        return []
+    try:
+        raw = open(sub_path, encoding="utf-8", errors="ignore").read()
+    except OSError:
+        return []
+    finally:
+        if cleanup:
+            try:
+                os.remove(sub_path)
+            except OSError:
+                pass
+    # srt uses HH:MM:SS,mmm; vtt uses [HH:]MM:SS.mmm — hours optional
+    times = []
+    for m in re.finditer(r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{3})\s*-->", raw):
+        h, mnt, s, ms = (int(g) if g else 0 for g in m.groups())
+        times.append(h * 3600 + mnt * 60 + s + ms / 1000.0)
+    return sorted(times)
+
+
+def _text_anchor_frames(times: list[float], fps: float, min_gap: float = 1.0) -> list[int]:
+    """Cue start times → frame numbers to force, at most one per `min_gap`
+    seconds so dense captions (karaoke-style, rapid dialogue) don't flood the
+    extraction — dedup would drop the extras anyway, but they'd still cost an
+    extraction pass each."""
+    picked, last = [], -min_gap
+    for t in times:
+        if t - last >= min_gap:
+            picked.append(round(t * fps))
+            last = t
+    return picked
+
+
 def extract_full_audio(video: str, out_dir: str) -> str | None:
     """Save the complete original soundtrack (music + speech + effects) so an
     audio-capable model can actually *hear* the video — not just read the words.
@@ -414,7 +476,7 @@ def save_to_kb(kb_dir: str, manifest_path: str, src: str) -> str:
 
 
 def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1.0,
-            adaptive: bool = False,
+            adaptive: bool = False, text_anchors: bool = False,
             max_frames: int = 150, lang: str | None = "auto", cookies: str | None = None,
             do_transcribe: bool = True, dedup_threshold: float = 8, dedup_window: int = 4,
             keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base", cookies_from_browser: str | None = None) -> Result:
@@ -422,8 +484,10 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     frames_dir = os.path.join(out_dir, "frames")
     video = fetch_video(src, out_dir, cookies=cookies, cookies_from_browser=cookies_from_browser)
     dur = _duration(video)
-    extracted = (extract_frames_adaptive(video, frames_dir, fps_floor)
-                 if adaptive else extract_frames(video, frames_dir, scene, fps_floor))
+    anchors = (_text_anchor_frames(_subtitle_cue_times(src, video, out_dir), _fps(video))
+               if text_anchors else None)
+    extracted = (extract_frames_adaptive(video, frames_dir, fps_floor, anchors=anchors)
+                 if adaptive else extract_frames(video, frames_dir, scene, fps_floor, anchors=anchors))
     kept, records = dedup_frames(frames_dir, dedup_threshold, dedup_window, max_frames,
                                  dropped_dir=os.path.join(out_dir, "dropped") if report else None)
     report_path = write_report(out_dir, records, dedup_threshold, dedup_window) if report else None
@@ -458,8 +522,9 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
                   "surface what serves it first, skip what doesn't)", ""]
     lines += [
         f"source: {src}",
-        f"duration: {dur}s | frames: {kept} (scene-change + density floor, "
-        f"deduped from {extracted} extracted)",
+        f"duration: {dur}s | frames: {kept} (scene-change + density floor"
+        + (f" + {len(anchors)} text anchors" if anchors else "")
+        + f", deduped from {extracted} extracted)",
         f"frames dir: {frames_dir}",
         f"transcript: {note}",
     ]
