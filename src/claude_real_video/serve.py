@@ -62,6 +62,7 @@ PAGE = """<!doctype html>
 </form>
 <div id="log"></div>
 <div id="done"><button id="openv"></button></div>
+<p style="margin-top:28px;font-size:12px;opacity:.55;text-align:center">Built in public by <a href="https://x.com/LeoAidoAI" target="_blank" style="color:inherit">@LeoAidoAI</a></p>
 <script>
 const I18N = {
   zh_tw: { title:"crv 網頁版",
