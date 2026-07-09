@@ -215,7 +215,7 @@ This free tool tells an LLM **what** is on screen. A stack of keyframes can't te
 
 **Recent Pro updates** (July 2026): a music-state timeline (hear the score building, peaking, falling away — with BPM), voice emotion read from the isolated voice instead of the full mix, an interactive `--viewer` dashboard with a clickable synced timeline, and richer gesture narration ("hand raised — right hand, while walking toward frame right").
 
-All as plain text in the same manifest, all computed on your machine. One-time founder price $29 → **https://leoaido.com/crv-pro/**
+All as plain text in the same manifest, all computed on your machine. One-time founder price $19 → **https://leoaido.com/crv-pro/**
 
 ---
 
