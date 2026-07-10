@@ -4,6 +4,8 @@
 
 **Let Claude — or any LLM — actually watch a video.**
 
+> **Naming:** crv is the short name for claude-real-video (the PyPI package). The paid add-on, **crv Pro**, is sold on Capafy under the listing name "llm-real-video Pro".
+
 ![demo](docs/demo.gif)
 
 > Same 58-second clip: fixed 1 fps sampling = **58 frames**. crv keeps the **26 that actually differ** — and `--grid` packs them into **3 contact sheets**. Fewer tokens, nothing missed.
@@ -27,7 +29,7 @@ crv "https://www.youtube.com/watch?v=..."
 
 Then drop the frames + `MANIFEST.txt` into Claude / ChatGPT / Gemini and ask away.
 
-**No terminal needed** — run `crv-web` and a local page opens (Traditional Chinese / Simplified Chinese / English): paste a YouTube or Reels link or a file path, click Analyze, open the result viewer. Runs 100% locally, nothing uploaded.
+**No terminal needed** — run `crv-web` and a local page opens (Traditional Chinese / Simplified Chinese / English): paste a YouTube or Reels link or a file path, click Analyze, open the result viewer. Video analysis and output generation run on your machine — the source video never gets uploaded. (If you then paste the extracted frames or transcript into a cloud LLM, that data goes to that provider.)
 
 Want to eyeball what the model will see first? Add `--viewer` — it writes a local `viewer.html` (video + keyframe grid + transcript) you can double-click open. No network, no extra installs.
 
@@ -220,7 +222,7 @@ This free tool tells an LLM **what** is on screen. A stack of keyframes can't te
 
 **crv Pro** adds everything the free version can't hear or feel:
 
-- **Camera-move classification** — every shot labelled static / pan / tilt / zoom / handheld (verified against ground-truth footage)
+- **Camera-move classification** — every shot labelled static / pan / tilt / zoom / handheld (tested against a manually labeled internal sample set — public benchmark methodology is in progress)
 - **Editing rhythm** — shot list, cuts per minute, and how pacing shifts across the video
 - **Perception timeline** — the subtle things frames can't show: gestures and expressions (a smile, a hand raised, pointing), voice pitch rises and pauses, speaker emotion, and non-speech sound events — all timestamped
 - **A breakdown report** — hook analysis, pacing curve, camera language, and a rubric your own LLM completes into a full teardown
