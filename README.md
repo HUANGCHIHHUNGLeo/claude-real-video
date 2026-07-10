@@ -22,7 +22,7 @@ you a clean folder any LLM can read. All the processing happens on your own mach
 
 ```bash
 crv "https://www.youtube.com/watch?v=..."
-# → crv-out/frames/*.jpg  +  crv-out/transcript.txt  +  crv-out/MANIFEST.txt
+# → crv-out/frames/*.jpg  +  crv-out/transcript.txt (+ transcript.json with timestamps)  +  crv-out/MANIFEST.txt
 ```
 
 Then drop the frames + `MANIFEST.txt` into Claude / ChatGPT / Gemini and ask away.

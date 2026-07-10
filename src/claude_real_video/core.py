@@ -287,6 +287,62 @@ def _has_subtitle_stream(video: str) -> bool:
     return bool(r.stdout.strip())
 
 
+
+def _parse_cues(raw: str) -> list[dict]:
+    """Parse srt/vtt subtitle text into timestamped segments
+    [{start, end, text}] — written next to transcript.txt as transcript.json."""
+    segs: list[dict] = []
+    tre = re.compile(
+        r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{3})\s*-->\s*"
+        r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{3})")
+    for block in re.split(r"\n\s*\n", raw.replace("\r\n", "\n").strip()):
+        lines = [l for l in block.split("\n")
+                 if l.strip() and not l.strip().startswith("WEBVTT")]
+        ti = mm = None
+        for i, l in enumerate(lines):
+            mm = tre.search(l)
+            if mm:
+                ti = i
+                break
+        if ti is None:
+            continue
+        g = [int(x) if x else 0 for x in mm.groups()]
+        start = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000.0
+        end = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000.0
+        text = " ".join(re.sub(r"<[^>]+>", "", t).strip() for t in lines[ti + 1:]).strip()
+        if text:
+            segs.append({"start": round(start, 2), "end": round(end, 2), "text": text})
+    return segs
+
+
+def _segments_from_whisper_json(path: str) -> list[dict]:
+    """Extract [{start, end, text}] from whisper's json output."""
+    try:
+        import json as _json
+        data = _json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return []
+    segs = []
+    for s in data.get("segments", []):
+        txt = str(s.get("text", "")).strip()
+        if txt:
+            segs.append({"start": round(float(s.get("start", 0)), 2),
+                         "end": round(float(s.get("end", 0)), 2), "text": txt})
+    return segs
+
+
+def _write_transcript_json(out_dir: str, segments: list[dict]) -> str | None:
+    """Persist timestamped transcript segments next to transcript.txt so
+    downstream tools (and your LLM) get timings, not just words."""
+    if not segments:
+        return None
+    import json as _json
+    p = os.path.join(out_dir, "transcript.json")
+    with open(p, "w", encoding="utf-8") as f:
+        _json.dump({"segments": segments}, f, ensure_ascii=False, indent=1)
+    return p
+
+
 def _subs_to_text(sub_path: str, out_txt: str) -> str | None:
     """Convert an .srt/.vtt subtitle file to plain text (drop indices,
     timecodes and styling tags). Returns out_txt on success."""
@@ -321,6 +377,11 @@ def existing_subtitles(src: str, video: str, out_dir: str) -> str | None:
         for ext in (".srt", ".vtt"):
             cand = base + ext
             if os.path.exists(cand) and _subs_to_text(cand, dst):
+                try:
+                    _write_transcript_json(out_dir, _parse_cues(
+                        open(cand, encoding="utf-8", errors="ignore").read()))
+                except OSError:
+                    pass
                 return dst
     # 2) embedded subtitle stream
     if _has_subtitle_stream(video):
@@ -329,6 +390,12 @@ def existing_subtitles(src: str, video: str, out_dir: str) -> str | None:
               "-hide_banner", "-loglevel", "error"])
         if os.path.exists(raw):
             ok = _subs_to_text(raw, dst)
+            if ok:
+                try:
+                    _write_transcript_json(out_dir, _parse_cues(
+                        open(raw, encoding="utf-8", errors="ignore").read()))
+                except OSError:
+                    pass
             try:
                 os.remove(raw)
             except OSError:
@@ -418,10 +485,20 @@ def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base") 
           "-hide_banner", "-loglevel", "error"])
     if not os.path.exists(wav):
         return None
-    cmd = ["whisper", wav, "--model", model, "--output_format", "txt", "--output_dir", out_dir]
+    # json carries per-segment timestamps (saved as transcript.json); txt stays
+    # the plain fallback. "all" writes both plus srt/vtt/tsv we clean up.
+    cmd = ["whisper", wav, "--model", model, "--output_format", "all", "--output_dir", out_dir]
     if lang and lang != "auto":
         cmd += ["--language", lang]
     _run(cmd)
+    jsrc = os.path.join(out_dir, "audio.json")
+    if os.path.exists(jsrc):
+        _write_transcript_json(out_dir, _segments_from_whisper_json(jsrc))
+    for ext in ("json", "srt", "vtt", "tsv"):  # tidy whisper's extra outputs
+        try:
+            os.remove(os.path.join(out_dir, f"audio.{ext}"))
+        except OSError:
+            pass
     src = os.path.join(out_dir, "audio.txt")
     dst = os.path.join(out_dir, "transcript.txt")
     if os.path.exists(src):
