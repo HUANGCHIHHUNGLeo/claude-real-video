@@ -14,6 +14,9 @@ def main() -> None:
     )
     ap.add_argument("source", help="Video URL (YouTube, Instagram, ...) or a local file path")
     ap.add_argument("-o", "--out", default="crv-out", help="Output directory (default: ./crv-out)")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="Replace a previous analysis living in the output directory "
+                         "(without this, a non-empty output dir is refused to avoid mixing videos)")
     ap.add_argument("--scene", type=float, default=0.30,
                     help="Scene-change sensitivity 0-1, lower = more frames (default: 0.30)")
     ap.add_argument("--fps-floor", type=float, default=1.0,
@@ -77,7 +80,7 @@ def main() -> None:
             do_transcribe=not args.no_transcribe,
             whisper_model=args.whisper_model, dedup_threshold=args.dedup_threshold,
             dedup_window=args.dedup_window, keep_audio=args.keep_audio, report=args.report,
-            why=args.why,
+            why=args.why, overwrite=args.overwrite,
         )
     except Exception as e:  # noqa: BLE001 — surface a clean message to the user
         print(f"error: {e}", file=sys.stderr)

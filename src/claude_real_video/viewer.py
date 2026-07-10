@@ -14,7 +14,9 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
     transcript = ""
     tpath = os.path.join(out_dir, "transcript.txt")
     if os.path.exists(tpath):
-        with open(tpath) as f:
+        # explicit utf-8: the transcript/HTML carry CJK and would crash on
+        # Windows' default cp1252 codec
+        with open(tpath, encoding="utf-8") as f:
             transcript = f.read().strip()
 
     video_tag = ""
@@ -128,6 +130,6 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
 </body></html>
 """
     out = os.path.join(out_dir, "viewer.html")
-    with open(out, "w") as f:
+    with open(out, "w", encoding="utf-8") as f:
         f.write(page)
     return out

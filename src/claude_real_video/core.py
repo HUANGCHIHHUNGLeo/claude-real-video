@@ -48,7 +48,8 @@ def fetch_video(src: str, out_dir: str, cookies: str | None = None, cookies_from
             _run(base + ["--cookies", cookies])
         if not os.path.exists(dest):
             # yt-dlp may have written a different extension
-            hits = sorted(glob.glob(os.path.join(out_dir, "source.*")))
+            hits = [h for h in sorted(glob.glob(os.path.join(out_dir, "source.*")))
+                    if not h.endswith((".part", ".ytdl", ".tmp"))]
             if hits:
                 dest = hits[0]
         if not os.path.exists(dest):
@@ -480,31 +481,40 @@ def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base") 
     """Optional: extract audio + run Whisper if the `whisper` CLI is installed."""
     if not _have("whisper"):
         return None
+    # audio.wav is a 16kHz mono *working file* for whisper only — the user-facing
+    # keep_audio artifact is audio.m4a (extract_full_audio), so this one is
+    # always removed once transcription is done.
     wav = os.path.join(out_dir, "audio.wav")
-    _run(["ffmpeg", "-i", video, "-vn", "-ar", "16000", "-ac", "1", wav,
+    _run(["ffmpeg", "-y", "-i", video, "-vn", "-ar", "16000", "-ac", "1", wav,
           "-hide_banner", "-loglevel", "error"])
     if not os.path.exists(wav):
         return None
-    # json carries per-segment timestamps (saved as transcript.json); txt stays
-    # the plain fallback. "all" writes both plus srt/vtt/tsv we clean up.
-    cmd = ["whisper", wav, "--model", model, "--output_format", "all", "--output_dir", out_dir]
-    if lang and lang != "auto":
-        cmd += ["--language", lang]
-    _run(cmd)
-    jsrc = os.path.join(out_dir, "audio.json")
-    if os.path.exists(jsrc):
-        _write_transcript_json(out_dir, _segments_from_whisper_json(jsrc))
-    for ext in ("json", "srt", "vtt", "tsv"):  # tidy whisper's extra outputs
+    try:
+        # json carries per-segment timestamps (saved as transcript.json); txt stays
+        # the plain fallback. "all" writes both plus srt/vtt/tsv we clean up.
+        cmd = ["whisper", wav, "--model", model, "--output_format", "all", "--output_dir", out_dir]
+        if lang and lang != "auto":
+            cmd += ["--language", lang]
+        _run(cmd)
+        jsrc = os.path.join(out_dir, "audio.json")
+        if os.path.exists(jsrc):
+            _write_transcript_json(out_dir, _segments_from_whisper_json(jsrc))
+        for ext in ("json", "srt", "vtt", "tsv"):  # tidy whisper's extra outputs
+            try:
+                os.remove(os.path.join(out_dir, f"audio.{ext}"))
+            except OSError:
+                pass
+        src = os.path.join(out_dir, "audio.txt")
+        dst = os.path.join(out_dir, "transcript.txt")
+        if os.path.exists(src):
+            os.replace(src, dst)
+            return dst
+        return None
+    finally:
         try:
-            os.remove(os.path.join(out_dir, f"audio.{ext}"))
+            os.remove(wav)
         except OSError:
             pass
-    src = os.path.join(out_dir, "audio.txt")
-    dst = os.path.join(out_dir, "transcript.txt")
-    if os.path.exists(src):
-        os.replace(src, dst)
-        return dst
-    return None
 
 
 def make_grids(frames_dir: str, out_dir: str, cols: int = 3, rows: int = 3,
@@ -552,12 +562,43 @@ def save_to_kb(kb_dir: str, manifest_path: str, src: str) -> str:
     return dest
 
 
+_OWNED_DIRS = ("frames", "dropped", "grids")
+_OWNED_GLOBS = ("source.*", "audio.*", "transcript*", "MANIFEST.txt", "manifest.txt",
+                "viewer.html", "report.html", "grid*.jpg", "grid*.png")
+
+
+def _prepare_out_dir(out_dir: str, overwrite: bool) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    has_prior = (os.path.isdir(os.path.join(out_dir, "frames"))
+                 or os.path.exists(os.path.join(out_dir, "MANIFEST.txt"))
+                 or glob.glob(os.path.join(out_dir, "source.*")))
+    if not has_prior:
+        return
+    if not overwrite:
+        raise RuntimeError(
+            f"Output directory '{out_dir}' already holds a previous analysis. "
+            "Use a fresh folder (recommended: one folder per video), or pass "
+            "--overwrite to replace it.")
+    for d in _OWNED_DIRS:
+        shutil.rmtree(os.path.join(out_dir, d), ignore_errors=True)
+    for pat in _OWNED_GLOBS:
+        for f in glob.glob(os.path.join(out_dir, pat)):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+
 def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1.0,
             adaptive: bool = False, text_anchors: bool = False,
             max_frames: int = 150, lang: str | None = "auto", cookies: str | None = None,
             do_transcribe: bool = True, dedup_threshold: float = 8, dedup_window: int = 4,
-            keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base", cookies_from_browser: str | None = None) -> Result:
-    os.makedirs(out_dir, exist_ok=True)
+            keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base", cookies_from_browser: str | None = None,
+            overwrite: bool = False) -> Result:
+    # 2026-07-10 (codex review): a reused output dir mixed frames/audio from the
+    # previous video into the new result. Refuse dirty dirs unless --overwrite,
+    # and on overwrite remove every artifact we own before running.
+    _prepare_out_dir(out_dir, overwrite)
     frames_dir = os.path.join(out_dir, "frames")
     video = fetch_video(src, out_dir, cookies=cookies, cookies_from_browser=cookies_from_browser)
     dur = _duration(video)
@@ -565,6 +606,10 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
                if text_anchors else None)
     extracted = (extract_frames_adaptive(video, frames_dir, fps_floor, anchors=anchors)
                  if adaptive else extract_frames(video, frames_dir, scene, fps_floor, anchors=anchors))
+    if extracted == 0:
+        raise RuntimeError(
+            "No frames could be extracted — the download may be incomplete or the file "
+            "is not a playable video (check ffmpeg is installed and the source plays).")
     kept, records = dedup_frames(frames_dir, dedup_threshold, dedup_window, max_frames,
                                  dropped_dir=os.path.join(out_dir, "dropped") if report else None)
     report_path = write_report(out_dir, records, dedup_threshold, dedup_window) if report else None
@@ -577,10 +622,12 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         note = "(skipped: --no-transcribe)"
     elif (transcript := existing_subtitles(src, video, out_dir)):
         note = f"{transcript} (from the video's own subtitles)"
+    elif not _has_audio(video):
+        # Check for audio *before* blaming a missing whisper install — a silent
+        # video would otherwise tell the user to go install whisper for nothing.
+        note = "(none — this video has no subtitles and no audio track)"
     elif not _have("whisper"):
         note = "(none — no existing subtitles; install whisper to transcribe: pip install openai-whisper)"
-    elif not _has_audio(video):
-        note = "(none — this video has no subtitles and no audio track)"
     else:
         transcript = transcribe(video, out_dir, lang, model=whisper_model)
         note = f"{transcript} (transcribed by whisper)" if transcript else "(none — transcription failed)"

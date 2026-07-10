@@ -5,5 +5,9 @@ from a URL (yt-dlp) or a local file.
 """
 from .core import process, Result
 
-__version__ = "0.4.0"
+try:
+    from importlib.metadata import version as _v
+    __version__ = _v("claude-real-video")
+except Exception:  # pragma: no cover
+    __version__ = "0.7.2"
 __all__ = ["process", "Result", "__version__"]

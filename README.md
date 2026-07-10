@@ -33,16 +33,18 @@ Want to eyeball what the model will see first? Add `--viewer` — it writes a lo
 
 **Slow-changing content** (animation tutorials, gradual morphs, slow pans): add `--adaptive` — frames are picked against their rolling neighbourhood instead of a fixed threshold, so a 2-3s squash-and-stretch that never spikes any single frame still gets captured.
 
-**Text-heavy content** (burned-in captions, lecture slides, screen recordings): add `--text-anchors` — extra frames are forced at subtitle-cue timestamps (sidecar `.srt`/`.vtt` or embedded track), so each spoken segment gets a matching visual even when the scene barely changes. At most one forced frame per second; scene detection is untouched.
+**Text-heavy content** (lecture slides, screen recordings, talking-head explainers): add `--text-anchors` — extra frames are forced at subtitle-cue timestamps, so each spoken segment gets a matching visual even when the scene barely changes. Needs a sidecar `.srt`/`.vtt` or an embedded subtitle track — captions burned into the pixels can't be detected. At most one forced frame per second; scene detection is untouched.
 
 Not doing LLM work? It also works as a **general-purpose video keyframe extractor** —
 scene-change detection + dedup, no ML models to download.
 
-**Using Claude Code?** Install it as a skill so Claude watches videos on its own:
+**Using Claude Code?** Install it as a skill so Claude watches videos on its own
+(the `skills/` folder lives in the repo, not in the pip package — clone it first):
 
 ```bash
-pip install claude-real-video
-mkdir -p ~/.claude/skills && cp -r skills/claude-real-video ~/.claude/skills/
+pip install "claude-real-video[whisper]"
+git clone https://github.com/HUANGCHIHHUNGLeo/claude-real-video.git
+mkdir -p ~/.claude/skills && cp -r claude-real-video/skills/claude-real-video ~/.claude/skills/
 ```
 
 Then just paste a video link into Claude Code and ask about it.
@@ -82,9 +84,12 @@ understanding.
 ## Install
 
 ```bash
-pip install claude-real-video              # core (frames + dedup)
-pip install "claude-real-video[whisper]"   # + audio transcription
+pip install "claude-real-video[whisper]"   # recommended: frames + dedup + audio transcription
+pip install claude-real-video              # core only (frames + dedup)
 ```
+
+pip extras never install themselves — without `[whisper]` there is **no speech-to-text**
+(videos that ship their own subtitles still get a transcript).
 
 ### System requirement: ffmpeg
 
@@ -133,18 +138,25 @@ crv "https://..." --cookies cookies.txt
 | flag | default | meaning |
 |---|---|---|
 | `-o, --out` | `crv-out` | output directory |
+| `--overwrite` | off | replace a previous analysis living in the output directory (without this, a non-empty output dir is refused to avoid mixing videos) |
 | `--scene` | `0.30` | scene-change sensitivity (lower = more frames) |
 | `--fps-floor` | `1.0` | at least one frame every N seconds |
 | `--max-frames` | `150` | hard cap on total frames |
+| `--adaptive` | off | adaptive scene detection: catches slow morphs (2-3s squash/stretch, gradual pans) a fixed threshold misses, by comparing each frame against its rolling neighbourhood |
+| `--text-anchors` | off | force extra frames at subtitle-cue timestamps (sidecar `.srt`/`.vtt` or embedded track) — for videos where meaning changes faster than pixels; at most one forced frame per second |
 | `--lang` | `auto` | Whisper language (`en`, `zh`, `auto`, ...) |
+| `--whisper-model` | `base` | Whisper model for transcription (`tiny`/`base`/`small`/`medium`/`large` — base is fast; medium/large for tricky audio, they download more and run slower) |
 | `--dedup-threshold` | `8` | % of pixels that must change for a frame to count as new; higher = fewer frames |
 | `--dedup-window` | `4` | compare against the last N kept frames — a shot the model already saw doesn't come back after a cutaway (`1` = consecutive-only) |
 | `--report` | off | keep dropped frames in `./dropped` + write `report.html` visualising every keep/drop decision |
 | `--no-transcribe` | off | skip audio |
 | `--keep-audio` | off | also save the **full soundtrack** (`audio.m4a`) so audio models can *hear* it |
+| `--viewer` | off | also write `viewer.html` — browse the video, keyframes and transcript in one local page (double-click to open) |
+| `--grid` | off | also tile the kept frames into 3x3 contact sheets (`./grids`) — consecutive frames side by side help the model follow motion and progression |
 | `--why` | – | why you're watching, e.g. `--why "find the pricing strategy"` — written into `MANIFEST.txt` so the model analyses with that lens instead of a generic summary |
 | `--kb` | – | also save the analysis as a dated markdown note into this folder (your Obsidian vault, notes dir, ...) — so it joins your knowledge base instead of dying in `crv-out` |
 | `--cookies` | – | Netscape cookie file for login-gated sources |
+| `--cookies-from-browser` | – | read login cookies straight from your own browser — `chrome`, `safari`, `firefox` or `edge` (your own account only) |
 
 ---
 
@@ -197,7 +209,8 @@ not something needed to make a video AI-readable.
 
 - Only download content you have the right to. The `--cookies` option is for
   your own, authorised access — don't ship credentials in a repo.
-- Re-running overwrites the output directory.
+- Use one output folder per video. Re-running into a folder that already holds
+  an analysis is refused (so two videos never mix); pass `--overwrite` to replace it.
 
 ## crv Pro — understand *how* a video was shot
 
