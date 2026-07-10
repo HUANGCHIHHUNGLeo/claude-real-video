@@ -69,6 +69,30 @@ def main() -> None:
     ap.add_argument("--keep-audio", action="store_true",
                     help="Also save the full original soundtrack (music + speech) as audio.m4a, "
                          "for models that can listen to audio (Gemini, GPT-4o, ...)")
+    ap.add_argument("--motion", action="store_true",
+                    help="Motion analysis: label every shot's camera move (static / pan / tilt / "
+                         "zoom / handheld), add an editing-rhythm summary (shots, cuts/min, cuts "
+                         "by thirds), and write 0.2s-apart action-burst frames for high-motion "
+                         "shots. All as plain text in MANIFEST.txt. Needs OpenCV "
+                         "(pip install \"claude-real-video[motion]\").")
+    ap.add_argument("--motion-fps", type=float, default=5.0,
+                    help="Frame-sampling rate for motion analysis (default: 5.0). Higher = more "
+                         "precise, slower. Lower catches faster cuts.")
+    ap.add_argument("--burst-gap", type=float, default=0.2,
+                    help="Spacing in seconds between action-burst frames for high-motion shots "
+                         "(default: 0.2)")
+    ap.add_argument("--max-burst-frames", type=int, default=12,
+                    help="Cap on burst frames written per high-motion shot (default: 12)")
+    ap.add_argument("--high-motion-pct", type=float, default=8.0,
+                    help="Motion level (%%W/s) above which a shot is 'high' and gets an action "
+                         "burst (default: 8.0)")
+    ap.add_argument("--chapters", action="store_true",
+                    help="Also derive an auto chapter list (reuses the shot boundaries) and label "
+                         "each by the transcript text at its start; written into MANIFEST.txt and "
+                         "motion.json. Implies the motion pipeline.")
+    ap.add_argument("--poster", action="store_true",
+                    help="Also pick a representative lead frame (poster.jpg) — the sharpest, "
+                         "most informative kept frame — so the model reads the best frame first.")
     args = ap.parse_args()
 
     try:
@@ -81,6 +105,10 @@ def main() -> None:
             whisper_model=args.whisper_model, dedup_threshold=args.dedup_threshold,
             dedup_window=args.dedup_window, keep_audio=args.keep_audio, report=args.report,
             why=args.why, overwrite=args.overwrite,
+            motion=args.motion or args.chapters, motion_fps=args.motion_fps,
+            burst_interval=args.burst_gap, max_burst_frames=args.max_burst_frames,
+            high_motion_pct=args.high_motion_pct, chapters=args.chapters,
+            poster=args.poster,
         )
     except Exception as e:  # noqa: BLE001 — surface a clean message to the user
         print(f"error: {e}", file=sys.stderr)
@@ -100,6 +128,10 @@ def main() -> None:
         print(f"  transcript: {r.transcript_path}")
     else:
         print(f"  transcript: {r.transcript_note}")
+    if r.poster_path:
+        print(f"  poster:     {r.poster_path}  (representative lead frame)")
+    if r.motion_path:
+        print(f"  motion:     {r.motion_path}  (camera moves, rhythm, bursts)")
     if r.audio_path:
         print(f"  audio:      {r.audio_path}  (full soundtrack — music + speech)")
     if args.grid:

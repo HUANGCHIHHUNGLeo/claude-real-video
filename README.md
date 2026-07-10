@@ -85,11 +85,14 @@ understanding.
 
 ```bash
 pip install "claude-real-video[whisper]"   # recommended: frames + dedup + audio transcription
+pip install "claude-real-video[motion]"    # camera-move + rhythm analysis (--motion)
+pip install "claude-real-video[whisper,motion]"  # both
 pip install claude-real-video              # core only (frames + dedup)
 ```
 
 pip extras never install themselves — without `[whisper]` there is **no speech-to-text**
-(videos that ship their own subtitles still get a transcript).
+(videos that ship their own subtitles still get a transcript), and without `[motion]`
+the `--motion` / `--chapters` / `--poster` flags report a clean "OpenCV required" error.
 
 ### System requirement: ffmpeg
 
@@ -133,6 +136,51 @@ crv "https://..." --cookies cookies.txt
 
 `python -m claude_real_video ...` works as an alias for `crv` too.
 
+### Motion — tell the model *how* it moves, not just what's on screen
+
+Keyframes tell an LLM what's on screen. Not how it moves. The core tool gives a
+model scene-aware frames and a transcript — enough to know what a video is about.
+But a stack of stills drops the two things that make video *video*: motion and
+pacing. A model can't tell a slow push-in from a frantic handheld chase, or a
+snappy edit from a lingering one, when all it sees is disconnected images.
+
+Add `--motion` (needs the `[motion]` extra — OpenCV, no ML models, no cloud) and
+it adds three things, all as plain text in the same `MANIFEST.txt`:
+
+- **Camera-move classification** — every shot labelled `static` / `pan-left` /
+  `pan-right` / `tilt-up` / `tilt-down` / `zoom-in` / `zoom-out` / `handheld`,
+  estimated from a global affine transform per frame pair.
+- **Editing rhythm** — full shot list with durations, cuts per minute, and how
+  the pacing shifts across the open, middle and close. Ask your AI *why* an edit
+  feels fast, and it answers with numbers.
+- **Action bursts** — high-motion shots automatically get 0.2s-apart frame
+  sequences (`burst_shotNN_*.jpg`), so the model reads movement as a progression
+  instead of guessing what happened between two keyframes.
+
+```bash
+crv "https://youtu.be/..." --motion --chapters --poster
+```
+
+A machine-readable `motion.json` (shots, rhythm, chapters) is also written for
+your own tools. `--chapters` derives an auto chapter list labelled by the
+transcript at each chapter start; `--poster` picks the sharpest representative
+lead frame (`poster.jpg`) so the model reads the best frame first.
+
+Real output (abridged):
+
+```
+--- motion analysis --
+editing rhythm: 14 shots | 21.0 cuts/min | avg 2.8s (median 2.1s, range 0.8-9.4s)
+cuts by thirds (open/middle/close): 7 / 4 / 3
+shots:
+  #01  0.00-2.10s  (2.10s) camera: pan-right   motion: high (12.3%W/s) burst: burst_shot01_1..4
+  #02  2.10-4.80s  (2.70s) camera: zoom-in     motion: medium (3.1%W/s)
+  #03  4.80-9.20s  (4.40s) camera: static      motion: low (0.2%W/s)
+```
+
+Everything runs locally with ffmpeg + OpenCV. No ML models to download, no cloud
+uploads.
+
 ### Options
 
 | flag | default | meaning |
@@ -152,6 +200,13 @@ crv "https://..." --cookies cookies.txt
 | `--no-transcribe` | off | skip audio |
 | `--keep-audio` | off | also save the **full soundtrack** (`audio.m4a`) so audio models can *hear* it |
 | `--viewer` | off | also write `viewer.html` — browse the video, keyframes and transcript in one local page (double-click to open) |
+| `--motion` | off | motion analysis: label every shot's camera move, add an editing-rhythm summary, and write 0.2s-apart action-burst frames for high-motion shots. Plain text in `MANIFEST.txt` + `motion.json`. Needs the `[motion]` extra (OpenCV) |
+| `--motion-fps` | `5.0` | frame-sampling rate for motion analysis (higher = more precise, slower) |
+| `--burst-gap` | `0.2` | spacing in seconds between action-burst frames for high-motion shots |
+| `--max-burst-frames` | `12` | cap on burst frames written per high-motion shot |
+| `--high-motion-pct` | `8.0` | motion level (%W/s) above which a shot gets an action burst |
+| `--chapters` | off | also derive an auto chapter list (reuses the shot boundaries) labelled by the transcript at each start; written into `MANIFEST.txt` and `motion.json`. Implies the motion pipeline |
+| `--poster` | off | also pick a representative lead frame (`poster.jpg`) — the sharpest, most informative kept frame |
 | `--grid` | off | also tile the kept frames into 3x3 contact sheets (`./grids`) — consecutive frames side by side help the model follow motion and progression |
 | `--why` | – | why you're watching, e.g. `--why "find the pricing strategy"` — written into `MANIFEST.txt` so the model analyses with that lens instead of a generic summary |
 | `--kb` | – | also save the analysis as a dated markdown note into this folder (your Obsidian vault, notes dir, ...) — so it joins your knowledge base instead of dying in `crv-out` |
@@ -212,19 +267,18 @@ not something needed to make a video AI-readable.
 - Use one output folder per video. Re-running into a folder that already holds
   an analysis is refused (so two videos never mix); pass `--overwrite` to replace it.
 
-## crv Pro — understand *how* a video was shot
+## crv Pro — understand *how* a video was shot, and *why* it works
 
-**The free version tells your AI what's on screen. crv Pro tells it how it was shot — and why it works.** Camera moves, editing rhythm, action bursts, plus a one-flag `--breakdown` report: hook analysis, pacing curve, camera language, Reels-algorithm lens, and a rubric your own LLM completes into a full video teardown.
+**The free version (with `--motion`) tells your AI what's on screen *and* how it moves** — camera-move classification, editing rhythm, and action bursts, all computed locally with OpenCV. **crv Pro goes further**: it adds the things frames and motion vectors can't hear or feel, plus a one-flag teardown report.
 
-This free tool tells an LLM **what** is on screen. A stack of keyframes can't tell it **how** the video moves — the camera work and the pacing.
+This free tool tells an LLM **what** is on screen and **how** the camera moved. It can't tell your AI *why* a cut lands, or *what* the speaker's face and voice were doing off-mic.
 
-**crv Pro** adds everything the free version can't hear or feel:
+**crv Pro** adds everything the free version can't perceive:
 
-- **Camera-move classification** — every shot labelled static / pan / tilt / zoom / handheld (verified against ground-truth footage)
-- **Editing rhythm** — shot list, cuts per minute, and how pacing shifts across the video
 - **Perception timeline** — the subtle things frames can't show: gestures and expressions (a smile, a hand raised, pointing), voice pitch rises and pauses, speaker emotion, and non-speech sound events — all timestamped
 - **A breakdown report** — hook analysis, pacing curve, camera language, and a rubric your own LLM completes into a full teardown
 - **Three modes** — `--mode watch` (understand the content), `--mode creator` (reverse-engineer the making), `--mode full`
+- *Plus* the camera-move / editing-rhythm / action-burst analysis the free `--motion` flag already provides — Pro reuses and builds on it
 
 **Recent Pro updates** (July 2026): a music-state timeline (hear the score building, peaking, falling away — with BPM), voice emotion read from the isolated voice instead of the full mix, an interactive `--viewer` dashboard with a clickable synced timeline, and richer gesture narration ("hand raised — right hand, while walking toward frame right").
 

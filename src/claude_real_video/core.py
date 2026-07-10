@@ -30,6 +30,9 @@ class Result:
     transcript_note: str = ""
     audio_path: str | None = None
     report_path: str | None = None
+    motion_path: str | None = None
+    poster_path: str | None = None
+    chapters: list = field(default_factory=list)
 
 
 def fetch_video(src: str, out_dir: str, cookies: str | None = None, cookies_from_browser: str | None = None) -> str:
@@ -594,7 +597,10 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
             max_frames: int = 150, lang: str | None = "auto", cookies: str | None = None,
             do_transcribe: bool = True, dedup_threshold: float = 8, dedup_window: int = 4,
             keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base", cookies_from_browser: str | None = None,
-            overwrite: bool = False) -> Result:
+            overwrite: bool = False,
+            motion: bool = False, motion_fps: float = 5.0, burst_interval: float = 0.2,
+            max_burst_frames: int = 12, high_motion_pct: float = 8.0, low_motion_pct: float = 2.0,
+            chapters: bool = False, poster: bool = False) -> Result:
     # 2026-07-10 (codex review): a reused output dir mixed frames/audio from the
     # previous video into the new result. Refuse dirty dirs unless --overwrite,
     # and on overwrite remove every artifact we own before running.
@@ -636,6 +642,48 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     # models that can listen to audio directly — the transcript only has the words.
     audio_path = extract_full_audio(video, out_dir) if keep_audio else None
 
+    # Motion analysis: camera moves, editing rhythm, action bursts. Runs on the
+    # video itself (independent of the keyframe sample) and appends to the
+    # manifest. Burst frames are written into the frames dir so the model reads
+    # high-motion shots as a progression. Requires OpenCV; skipped cleanly if
+    # the [motion] extra isn't installed.
+    motion_path = None
+    chap = []
+    if motion:
+        from . import motion as _motion
+        try:
+            segs = None
+            tjson = os.path.join(out_dir, "transcript.json")
+            if os.path.exists(tjson):
+                import json as _json
+                try:
+                    segs = _json.load(open(tjson, encoding="utf-8")).get("segments", [])
+                except Exception:
+                    segs = None
+            res = _motion.analyze_motion(
+                video, frames_dir, out_dir, dur, motion_fps=motion_fps,
+                burst_interval=burst_interval, max_burst_frames=max_burst_frames,
+                high_motion_pct=high_motion_pct, low_motion_pct=low_motion_pct,
+                chapters=chapters, transcript_segments=segs)
+            lines_motion = res["text"]
+            motion_path = res.get("json_path")
+            chap = res.get("chapters", [])
+        except Exception as e:  # noqa: BLE001 — don't let motion break a run
+            lines_motion = ["--- motion analysis --",
+                            f"(skipped: {e})"]
+    else:
+        lines_motion = []
+
+    # Poster: a single representative lead frame for the model to read first.
+    poster_path = None
+    if poster:
+        from . import motion as _motion
+        try:
+            poster_path = _motion.extract_poster(frames_dir, out_dir, video, dur)
+        except Exception as e:  # noqa: BLE001
+            poster_path = None
+            lines_motion = lines_motion + [f"(poster skipped: {e})"]
+
     manifest = os.path.join(out_dir, "MANIFEST.txt")
     lines = []
     if why:
@@ -652,8 +700,14 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         f"frames dir: {frames_dir}",
         f"transcript: {note}",
     ]
+    if poster_path:
+        lines.append(f"poster: {poster_path}  (representative lead frame)")
     if keep_audio:
         lines.append(f"audio: {audio_path or '(none — this video has no audio track)'}")
+    if lines_motion:
+        lines.append("")
+        lines.extend(lines_motion)
+    lines.append("")
     lines.append("--- transcript ---")
     if transcript and os.path.exists(transcript):
         lines.append(open(transcript, encoding="utf-8").read().strip())
@@ -662,4 +716,5 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     return Result(out_dir=out_dir, video=video, duration=dur, frames_dir=frames_dir,
                   frame_count=kept, extracted_frames=extracted,
                   transcript_path=transcript, manifest_path=manifest,
-                  transcript_note=note, audio_path=audio_path, report_path=report_path)
+                  transcript_note=note, audio_path=audio_path, report_path=report_path,
+                  motion_path=motion_path, poster_path=poster_path, chapters=chap)
