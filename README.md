@@ -148,7 +148,7 @@ crv "https://..." --cookies cookies.txt
 | `--text-anchors` | off | force extra frames at subtitle-cue timestamps (sidecar `.srt`/`.vtt` or embedded track) — for videos where meaning changes faster than pixels; at most one forced frame per second |
 | `--lang` | `auto` | Whisper language (`en`, `zh`, `auto`, ...) |
 | `--whisper-model` | `base` | Whisper model for transcription (`tiny`/`base`/`small`/`medium`/`large`/`turbo` — base is fast; **want sharper transcripts? `--whisper-model turbo` is one flag away**: close to large-v2 accuracy at ~8x the speed, one-time 1.6GB download, ~6GB memory) |
-| `--dedup-threshold` | `8` | % of pixels that must change for a frame to count as new; higher = fewer frames |
+| `--dedup-threshold` | `8` | % of pixels that must change for a frame to count as new; higher = fewer frames (the settled-local detector's gate scales with it too) |
 | `--dedup-window` | `4` | compare against the last N kept frames — a shot the model already saw doesn't come back after a cutaway (`1` = consecutive-only) |
 | `--report` | off | keep dropped frames in `./dropped` + write `report.html` visualising every keep/drop decision |
 | `--no-transcribe` | off | skip audio |
@@ -185,11 +185,20 @@ print(r.frame_count, r.transcript_path)
 2. **Extract** — one chronological `ffmpeg select` pass grabs every scene change
    *plus* a density floor (at least one frame every `--fps-floor` seconds), so
    fast cuts and slow screencasts are both covered.
-3. **Dedup** — real pixel difference (downscaled RGB, not a perceptual hash — hashes
-   go blind on flat colours and equal-luma hue changes) against a **sliding window**
-   of the last `--dedup-window` kept frames, so an A-B-A cutaway doesn't re-send a
-   shot the model has already seen. `--report` writes `report.html` showing every
-   keep/drop decision with its diff %, for tuning.
+3. **Dedup** — two detectors against a **sliding window** of the last
+   `--dedup-window` kept frames, so an A-B-A cutaway doesn't re-send a shot the
+   model has already seen. A *global* channel measures real pixel difference
+   (downscaled RGB, not a perceptual hash — hashes go blind on flat colours and
+   equal-luma hue changes); `--dedup-threshold` is the % of it that must change.
+   A *settled-local* channel (v0.7.4) catches what the global one can't see:
+   thin pen strokes, caption/text-card swaps and small UI updates that average
+   out to ~0% globally. It looks, on a finer signature, for a region that
+   differs strongly from every recent kept frame (with 1px shift tolerance, so
+   film grain and frame jitter don't trigger) *and* is no longer changing — a
+   settled new state, not motion mid-flight — with a cooldown so continuous
+   motion that pauses every second (a waving flag, drifting smoke) can't keep
+   re-firing. The final frame is evaluated even if still in motion (so a video's closing state is never lost), but it must clear both contrast gates like any other frame. `--report` writes `report.html` showing every keep/drop decision
+   with its diff % (settled-local keeps are labelled), for tuning.
 4. **Text** — if the video **already has subtitles** (a sidecar `.srt`/`.vtt` next to a
    local file, or an embedded subtitle track), those are used as the transcript —
    faster and more accurate than re-transcribing. Only when there are no subtitles

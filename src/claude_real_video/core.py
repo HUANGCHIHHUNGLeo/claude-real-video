@@ -179,52 +179,150 @@ def extract_frames_adaptive(video: str, frames_dir: str, fps_floor: float,
 def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
                  max_frames: int = 150,
                  dropped_dir: str | None = None) -> tuple[int, list[dict]]:
-    """Drop near-duplicate frames by real pixel difference (downscaled grayscale,
-    like videostil's pixelmatch approach — more faithful than a perceptual hash,
-    which goes blind on flat colours and brightness-only changes) against a
-    sliding window of the last `window` kept frames. The window also catches
-    A-B-A alternation — a shot the model has already seen doesn't come back
-    just because a different frame sat in between. `threshold` is the percent
-    of pixels that must change for a frame to count as new.
+    """Drop near-duplicate frames with two complementary detectors, both against
+    a sliding window of the last `window` kept frames (the window catches A-B-A
+    alternation — a shot the model has already seen doesn't come back just
+    because a different frame sat in between).
+
+    1. Global channel (crv's original comparator): % of changed cells on a
+       16x16 RGB signature, tolerance 25/255 per channel. `threshold` is the
+       percent that must change for a frame to count as new. Good for cuts,
+       pans, motion — blind to small local changes (its cells average ~whole
+       regions away).
+
+    2. Settled-local channel (v0.7.4, fixes the dedup blindness found in
+       benchmark/benchmark.md): on a 192x192 signature, find pixels that
+       differ strongly (>80/255) from EVERY kept frame in the window — with a
+       ±1-pixel shift tolerance so film weave / jitter / grain can re-match —
+       and that are NOT still changing toward the next frame (a settled new
+       state, not motion mid-flight). Score = the most-changed cell of a 16x16
+       grid over that mask. This sees thin ink strokes, caption/text swaps and
+       local UI updates that measure 0.0% on the global channel. Guards keep
+       it from firing on noise:
+       - only consulted when the scene is otherwise static (global diff vs the
+         *previous* frame < 3%), or on the final frame (a state that appears
+         at the end has nothing after it to prove it settled);
+       - the changed pixels must survive a stricter 105/255 tolerance too
+         (soft-contrast drift like smoke dissipating fades out there; ink and
+         text keep a hard core);
+       - a cooldown: each settled-keep raises the bar (x(1+2) additively),
+         decaying by 0.7 per frame — so sustained "settling" motion (a waving
+         flag pausing every second) can't take a frame every time, while
+         sparse real events (one new text card) pass at the base gate of
+         0.85 x threshold.
+
     Returns (kept_count, per-frame records for the optional report)."""
     frames = sorted(glob.glob(os.path.join(frames_dir, "*.jpg")))
     try:
-        from PIL import Image
+        from PIL import Image, ImageChops
     except ImportError:
         return len(frames), []
 
-    def sig(path: str, size: int = 16) -> list[tuple[int, int, int]]:
+    FINE = 192          # settled-channel signature size (px)
+    GRID = 16           # settled-channel scoring grid (GRIDxGRID cells)
+    SOFT_TOL = 80       # per-channel tolerance for the settled mask
+    HARD_TOL = 105      # stricter pass: soft-contrast drift dies, ink/text survive
+    MOTION_CEIL = 3.0   # settled channel only when scene ~static vs previous frame
+    GATE = 0.85 * threshold   # settled base gate, in max-cell-% units
+    HARD_GATE = 0.4 * GATE    # minimum hard-tolerance score
+    BUMP, DECAY = 2.0, 0.7    # cooldown dynamics
+
+    def sigs(path: str):
         # RGB, not grayscale: hues with equal luma (a red→green cut) must not
         # look identical to the comparator
-        return list(Image.open(path).convert("RGB").resize((size, size)).getdata())
+        im = Image.open(path).convert("RGB")
+        return (list(im.resize((16, 16)).getdata()),
+                im.resize((FINE, FINE), Image.BOX))
 
     def pct_diff(a: list, b: list, tol: int = 25) -> float:
         changed = sum(max(abs(x[0] - y[0]), abs(x[1] - y[1]), abs(x[2] - y[2])) > tol
                       for x, y in zip(a, b))
         return 100.0 * changed / len(a)
 
+    def strong_mask(a, b, tol):
+        # binary mask: max-channel |a-b| > tol (all PIL C ops — this is the hot path)
+        d = ImageChops.difference(a, b)
+        r, g, bl = d.split()
+        m = ImageChops.lighter(ImageChops.lighter(r, g), bl)
+        return m.point([0] * (tol + 1) + [255] * (255 - tol))
+
+    def minshift_mask(kf, fi, tol):
+        # a pixel only counts as changed if no pixel within ±1 of the kept
+        # frame matches it — jitter/weave/grain tolerance
+        comb = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                m = strong_mask(ImageChops.offset(kf, dx, dy), fi, tol)
+                comb = m if comb is None else ImageChops.darker(comb, m)
+        return comb
+
+    def settled_grid(fine, fine_next, recent_fine, tol) -> list:
+        # changed vs every kept frame in the window, and not still changing
+        # toward the next frame; returns the per-cell % of a GRIDxGRID grid
+        inv = (ImageChops.invert(minshift_mask(fine_next, fine, tol))
+               if fine_next is not None else None)
+        comb = None
+        for kf in recent_fine:
+            m = minshift_mask(kf, fine, tol)
+            if inv is not None:
+                m = ImageChops.multiply(m, inv)
+            comb = m if comb is None else ImageChops.darker(comb, m)
+        return [v * 100.0 / 255.0 for v in comb.resize((GRID, GRID), Image.BOX).getdata()]
+
+    # lazy signatures with a one-frame lookahead — never hold more than two
+    # frames' data in memory (multi-hour videos would blow up otherwise)
+    pending = sigs(frames[0]) if frames else None
     kept: list[str] = []
-    recent: list[list[int]] = []  # signatures of the last `window` kept frames
+    recent: list[list] = []       # 16x16 signatures of the last `window` kept frames
+    recent_fine: list = []        # matching 192x192 signatures
     records: list[dict] = []
-    for f in frames:
-        h = sig(f)
+    mult = 1.0                    # settled-channel cooldown multiplier
+    prev_coarse = None
+    for idx, f in enumerate(frames):
+        h, fine = pending
+        pending = sigs(frames[idx + 1]) if idx + 1 < len(frames) else None
         dist = min((pct_diff(h, k) for k in recent), default=None)
-        if dist is None or dist > threshold:
+        keep = dist is None or dist > threshold
+        via = "first" if dist is None else ("global" if keep else None)
+        settled = None
+        if not keep:
+            motion = pct_diff(h, prev_coarse) if prev_coarse is not None else 100.0
+            last = idx == len(frames) - 1
+            if motion < MOTION_CEIL or last:
+                fine_next = pending[1] if pending is not None else None
+                soft = settled_grid(fine, fine_next, recent_fine, SOFT_TOL)
+                settled = max(soft)
+                if settled > GATE * mult:
+                    # the hard-contrast check must fire in the SAME grid cell —
+                    # unrelated hard noise elsewhere must not validate a soft drift
+                    hard = settled_grid(fine, fine_next, recent_fine, HARD_TOL)
+                    if any(s > GATE * mult and hd > HARD_GATE
+                           for s, hd in zip(soft, hard)):
+                        keep = True
+                        via = "settled"
+                        mult += BUMP
+        prev_coarse = h
+        mult = max(1.0, mult * DECAY)
+        if keep:
             kept.append(f)
             recent.append(h)
+            recent_fine.append(fine)
             if len(recent) > window:
                 recent.pop(0)
-            records.append({"name": os.path.basename(f), "dist": dist, "kept": True})
+                recent_fine.pop(0)
+            records.append({"name": os.path.basename(f), "dist": dist,
+                            "settled": settled, "via": via, "kept": True})
         else:
             if dropped_dir:
                 os.makedirs(dropped_dir, exist_ok=True)
                 shutil.move(f, os.path.join(dropped_dir, os.path.basename(f)))
             else:
                 os.remove(f)
-            records.append({"name": os.path.basename(f), "dist": dist, "kept": False})
+            records.append({"name": os.path.basename(f), "dist": dist,
+                            "settled": settled, "via": None, "kept": False})
 
     # cap: thin uniformly *after* dedup so the survivors stay spread across the video
-    if len(kept) > max_frames:
+    if max_frames and len(kept) > max_frames:
         step = len(kept) / max_frames
         keep_idx = {int(i * step) for i in range(max_frames)}
         for i, f in enumerate(list(kept)):
@@ -259,9 +357,12 @@ def write_report(out_dir: str, records: list[dict], threshold: float, window: in
         src = f"frames/{r['name']}" if r["kept"] else f"dropped/{r['name']}"
         why = "capped" if r.get("capped") else ("kept" if r["kept"] else "dropped")
         dist = "first" if r["dist"] is None else f"{r['dist']:.1f}%"
+        label = why
+        if r.get("via") == "settled":
+            label = f"kept · settled local change {r['settled']:.1f}%"
         rows.append(
             f'<figure class="{why}"><img src="{src}" loading="lazy">'
-            f'<figcaption>{r["name"]}<br>dist {dist} · {why}</figcaption></figure>')
+            f'<figcaption>{r["name"]}<br>dist {dist} · {label}</figcaption></figure>')
     html = f"""<!doctype html><meta charset="utf-8"><title>crv dedup report</title>
 <style>
 body{{font:14px system-ui;margin:20px;background:#111;color:#ddd}}

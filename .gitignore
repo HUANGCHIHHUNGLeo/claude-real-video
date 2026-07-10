@@ -11,3 +11,8 @@ crv-out/
 !docs/*.jpg
 .gstack/
 dist*/
+
+# benchmark: evidence images are committed, working files are not
+!benchmark/results/**/*.jpg
+benchmark/work/
+benchmark/*.log
