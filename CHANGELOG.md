@@ -1,3 +1,11 @@
+## 0.9.0 (2026-07-10)
+- **`viralsynth` — analyse a viral video, generate a new one from its motion blueprint.** New `viralsynth` / `crv-synth` CLI built on `--motion`.
+  - **`clone` mode** — remix the source (or `--assets` clips) into a fresh cut that *feels* like the viral video: slides a candidate-pool window over the footage, classifies each window's camera move + motion (same pipeline as `--motion`), and for every blueprint shot picks the best-matching segment, retimes/pads it to the target duration, optionally emulates the camera move, and concatenates. LLM writes the on-screen captions.
+  - **`breakdown` mode** — a narrated teardown: representative frame + camera-move annotation + an LLM-written one-liner per shot, laid as caption cards. Optional `--tts` voiceover.
+  - **Pluggable LLM** (`llm.py`, new `[llm]` extra): defaults to Claude (`ANTHROPIC_API_KEY`), falls back to OpenAI, a local OpenAI-compatible endpoint (`VIRALSYNTH_LLM_BASE_URL`), then an offline `none` provider so it runs with no key.
+  - Writes `<out>.plan.json` (the blueprint→segment map / narration plan) for downstream tools.
+- README + new **VIRALSYNTH.md** document the automation; CHANGELOG updated.
+
 ## 0.8.0 (2026-07-10)
 - **`--motion`: camera-move classification + editing rhythm + action bursts.** Everything runs locally with ffmpeg + OpenCV (new `[motion]` extra — `pip install "claude-real-video[motion]"`), no ML models, no cloud.
   - **Camera-move classification** — every shot labelled `static` / `pan-left` / `pan-right` / `tilt-up` / `tilt-down` / `zoom-in` / `zoom-out` / `handheld`, estimated from a global affine transform (Shi-Tomasi + Lucas-Kanade + partial-affine) per motion-frame pair.

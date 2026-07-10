@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-real-video"
-version = "0.8.0"
+version = "0.9.0"
 description = "Let Claude (or any LLM) actually watch a video — scene-aware, deduplicated frames + transcript, from a URL or local file."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,11 +25,14 @@ dependencies = [
 [project.optional-dependencies]
 whisper = ["openai-whisper>=20231117"]
 motion = ["opencv-python-headless>=4.7.0", "numpy>=1.23"]
+llm = ["anthropic>=0.40", "openai>=1.0"]
 
 [project.scripts]
 claude-real-video = "claude_real_video.cli:main"
 crv = "claude_real_video.cli:main"
 crv-web = "claude_real_video.serve:main"
+viralsynth = "claude_real_video.synth_cli:main"
+crv-synth = "claude_real_video.synth_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/HUANGCHIHHUNGLeo/claude-real-video"

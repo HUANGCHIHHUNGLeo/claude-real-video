@@ -267,6 +267,26 @@ not something needed to make a video AI-readable.
 - Use one output folder per video. Re-running into a folder that already holds
   an analysis is refused (so two videos never mix); pass `--overwrite` to replace it.
 
+## viralsynth — analyse a viral video, generate a new one
+
+`viralsynth` (new in 0.9.0) builds on `--motion`: it extracts a viral video's
+**motion blueprint** (per-shot camera moves + editing rhythm) and generates a
+new video from it. Two modes:
+
+- **`clone`** — remix the source (or other clips) into a fresh cut that *feels*
+  like the viral video: it pulls segments whose motion matches each blueprint
+  shot, so the result inherits the same pacing and camera language.
+- **`breakdown`** — a narrated teardown (keyframes + camera-move annotations +
+  an LLM-written narration on *why* each shot works).
+
+```bash
+viralsynth "https://www.tiktok.com/@user/video/..." --mode clone --topic "my morning routine"
+viralsynth "https://youtu.be/..." --mode breakdown --topic "why this edit works"
+```
+
+Full guide: **[VIRALSYNTH.md](VIRALSYNTH.md)**. Install with
+`pip install "claude-real-video[motion,llm]"`.
+
 ## crv Pro — understand *how* a video was shot, and *why* it works
 
 **The free version (with `--motion`) tells your AI what's on screen *and* how it moves** — camera-move classification, editing rhythm, and action bursts, all computed locally with OpenCV. **crv Pro goes further**: it adds the things frames and motion vectors can't hear or feel, plus a one-flag teardown report.
