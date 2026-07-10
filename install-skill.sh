@@ -5,10 +5,9 @@
 
 set -euo pipefail
 
-SKILL_NAME="claude-real-video-for-agents"
+SKILLS=("claude-real-video-for-agents" "viralsynth")
 DEFAULT_INSTALL_DIR="$HOME/.agents/skills"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILL_SOURCE="$SCRIPT_DIR/skills/$SKILL_NAME"
 
 # Colors
 RED='\033[0;31m'
@@ -24,17 +23,19 @@ ok()    { echo -e "${GREEN}[ok]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
 err()   { echo -e "${RED}[error]${NC} $*" >&2; }
 
-# --- Validate source ---
-if [[ ! -d "$SKILL_SOURCE" ]]; then
-    err "Skill source not found: $SKILL_SOURCE"
-    err "Run this script from the claude-real-video repo root."
-    exit 1
-fi
-
-if [[ ! -f "$SKILL_SOURCE/SKILL.md" ]]; then
-    err "SKILL.md not found in $SKILL_SOURCE"
-    exit 1
-fi
+# --- Validate sources ---
+for SKILL_NAME in "${SKILLS[@]}"; do
+    SKILL_SOURCE="$SCRIPT_DIR/skills/$SKILL_NAME"
+    if [[ ! -d "$SKILL_SOURCE" ]]; then
+        err "Skill source not found: $SKILL_SOURCE"
+        err "Run this script from the claude-real-video repo root."
+        exit 1
+    fi
+    if [[ ! -f "$SKILL_SOURCE/SKILL.md" ]]; then
+        err "SKILL.md not found in $SKILL_SOURCE"
+        exit 1
+    fi
+done
 
 echo -e "${BOLD}${CYAN}"
 echo "╔═══════════════════════════════════════════════════════════╗"
@@ -43,27 +44,29 @@ echo "╚═══════════════════════�
 echo -e "${NC}"
 
 # --- Step 1: Install to default path ---
-info "Installing skill to ${BOLD}$DEFAULT_INSTALL_DIR/$SKILL_NAME${NC}"
-mkdir -p "$DEFAULT_INSTALL_DIR"
+for SKILL_NAME in "${SKILLS[@]}"; do
+    SKILL_SOURCE="$SCRIPT_DIR/skills/$SKILL_NAME"
+    info "Installing skill to ${BOLD}$DEFAULT_INSTALL_DIR/$SKILL_NAME${NC}"
+    mkdir -p "$DEFAULT_INSTALL_DIR"
 
-if [[ -e "$DEFAULT_INSTALL_DIR/$SKILL_NAME" ]]; then
-    warn "Existing install found at $DEFAULT_INSTALL_DIR/$SKILL_NAME"
-    read -rp "  Overwrite? [y/N] " answer
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
-        rm -rf "$DEFAULT_INSTALL_DIR/$SKILL_NAME"
-    else
-        info "Skipping default install."
+    if [[ -e "$DEFAULT_INSTALL_DIR/$SKILL_NAME" ]]; then
+        warn "Existing install found at $DEFAULT_INSTALL_DIR/$SKILL_NAME"
+        read -rp "  Overwrite? [y/N] " answer
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            rm -rf "$DEFAULT_INSTALL_DIR/$SKILL_NAME"
+        else
+            info "Skipping default install."
+        fi
     fi
-fi
 
-if [[ ! -e "$DEFAULT_INSTALL_DIR/$SKILL_NAME" ]]; then
-    cp -r "$SKILL_SOURCE" "$DEFAULT_INSTALL_DIR/$SKILL_NAME"
-    ok "Installed to $DEFAULT_INSTALL_DIR/$SKILL_NAME"
-else
-    ok "Default install preserved."
-fi
-
-echo ""
+    if [[ ! -e "$DEFAULT_INSTALL_DIR/$SKILL_NAME" ]]; then
+        cp -r "$SKILL_SOURCE" "$DEFAULT_INSTALL_DIR/$SKILL_NAME"
+        ok "Installed to $DEFAULT_INSTALL_DIR/$SKILL_NAME"
+    else
+        ok "Default install preserved."
+    fi
+    echo ""
+done
 
 # --- Step 2: Auto-detect agent platforms ---
 declare -a DETECTED_NAMES=()
@@ -162,28 +165,29 @@ echo ""
 LINK_COUNT=0
 for i in "${SELECTED_IDX[@]}"; do
     target_dir="${DETECTED_PATHS[$i]}"
-    target_link="$target_dir/$SKILL_NAME"
     platform="${DETECTED_NAMES[$i]}"
-
     mkdir -p "$target_dir"
 
-    if [[ -L "$target_link" ]]; then
-        existing=$(readlink "$target_link")
-        if [[ "$existing" == "$DEFAULT_INSTALL_DIR/$SKILL_NAME" ]]; then
-            ok "Already linked: $platform"
+    for SKILL_NAME in "${SKILLS[@]}"; do
+        target_link="$target_dir/$SKILL_NAME"
+        if [[ -L "$target_link" ]]; then
+            existing=$(readlink "$target_link")
+            if [[ "$existing" == "$DEFAULT_INSTALL_DIR/$SKILL_NAME" ]]; then
+                ok "Already linked: $platform / $SKILL_NAME"
+                continue
+            else
+                warn "Removing stale symlink at $target_link (pointed to $existing)"
+                rm "$target_link"
+            fi
+        elif [[ -e "$target_link" ]]; then
+            warn "Existing directory at $target_link — skipping $platform / $SKILL_NAME"
             continue
-        else
-            warn "Removing stale symlink at $target_link (pointed to $existing)"
-            rm "$target_link"
         fi
-    elif [[ -e "$target_link" ]]; then
-        warn "Existing directory at $target_link — skipping $platform"
-        continue
-    fi
 
-    ln -s "$DEFAULT_INSTALL_DIR/$SKILL_NAME" "$target_link"
-    ok "Symlinked → $platform ($target_link)"
-    LINK_COUNT=$((LINK_COUNT + 1))
+        ln -s "$DEFAULT_INSTALL_DIR/$SKILL_NAME" "$target_link"
+        ok "Symlinked → $platform ($target_link)"
+        LINK_COUNT=$((LINK_COUNT + 1))
+    done
 done
 
 echo ""
@@ -191,14 +195,18 @@ echo ""
 # --- Summary ---
 echo -e "${BOLD}${GREEN}Done!${NC}"
 echo ""
-echo "  Installed: $DEFAULT_INSTALL_DIR/$SKILL_NAME"
+for SKILL_NAME in "${SKILLS[@]}"; do
+    echo "  Installed: $DEFAULT_INSTALL_DIR/$SKILL_NAME"
+done
 if (( LINK_COUNT > 0 )); then
     echo "  Symlinks:  $LINK_COUNT platform(s)"
 fi
 echo ""
-info "To use: paste a video URL into your agent and ask about it."
-info "The agent will automatically detect the skill and run crv."
+info "To use: paste a video URL into your agent and ask to clone/break it down."
+info "The agent will automatically detect the skill and run viralsynth (or crv)."
 echo ""
 info "Manual install for other platforms:"
-echo "  ln -s $DEFAULT_INSTALL_DIR/$SKILL_NAME ~/.<agent>/skills/$SKILL_NAME"
+for SKILL_NAME in "${SKILLS[@]}"; do
+    echo "  ln -s $DEFAULT_INSTALL_DIR/$SKILL_NAME ~/.<agent>/skills/$SKILL_NAME"
+done
 echo ""
