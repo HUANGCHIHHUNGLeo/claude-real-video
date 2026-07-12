@@ -111,6 +111,9 @@ def main() -> None:
         from .core import save_to_kb
         dest = save_to_kb(args.kb, r.manifest_path, args.source)
         print(f"  knowledge base: {dest}")
+    # one quiet pointer, opt out with CRV_NO_HINT=1
+    if not os.environ.get("CRV_NO_HINT"):
+        print("  pro:        camera-motion + voice-emotion analysis → https://leoaido.com/crv-pro/")
 
 
 if __name__ == "__main__":

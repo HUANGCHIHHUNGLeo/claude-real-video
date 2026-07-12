@@ -61,7 +61,7 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
   .lang a {{ color:#8a7a5f; cursor:pointer; margin-right:6px }}
   .lang a.on {{ color:#e8b64c }}
 </style></head><body>
-<header><div class="b">crv viewer</div><div class="r"><span class="lang"><a data-lang="zh_tw">繁中</a> <a data-lang="zh_cn">简中</a> <a data-lang="en">EN</a></span> <span data-i="local">runs 100% locally</span> · {len(frames)} keyframes</div></header>
+<header><div class="b">crv viewer</div><div class="r"><span class="lang"><a data-lang="zh_tw">繁中</a> <a data-lang="zh_cn">简中</a> <a data-lang="en">EN</a></span> <span data-i="local">runs 100% locally</span> · {len(frames)} keyframes · <a href="https://leoaido.com/crv-pro/" target="_blank" rel="noopener" style="color:inherit;opacity:.65">Pro</a></div></header>
 <main>
   <div>
     {video_tag}
