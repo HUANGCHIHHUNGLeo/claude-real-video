@@ -24,7 +24,7 @@ you a clean folder any LLM can read. All the processing happens on your own mach
 
 ```bash
 crv "https://www.youtube.com/watch?v=..."
-# → crv-out/frames/*.jpg  +  crv-out/transcript.txt (+ transcript.json with timestamps)  +  crv-out/MANIFEST.txt
+# → crv-out/frames/*.jpg  +  frames.json (per-frame timestamps)  +  transcript.txt/.json  +  MANIFEST.txt
 ```
 
 Then drop the frames + `MANIFEST.txt` into Claude / ChatGPT / Gemini and ask away.
@@ -207,7 +207,13 @@ print(r.frame_count, r.transcript_path)
    (`audio.m4a`: music + speech + effects, copied losslessly when possible). The
    transcript only has the *words*; the audio file lets a model that can listen
    (Gemini, GPT-4o, …) actually *hear* the music and tone.
-6. **Manifest** — `MANIFEST.txt` summarises everything for the model.
+6. **Timestamps** — every kept frame's source-video time survives the whole
+   pipeline (extraction → dedup → `--max-frames` thinning → renaming) and is
+   written to `frames.json` (`file` / `timestamp_sec` / `timestamp` /
+   `selection_reason`). Cite visual evidence as `frame_012 @ 00:03:41`, align
+   frames with `transcript.json` segments, or feed the map to a video-RAG
+   pipeline. In `viewer.html`, click any keyframe → "play video from here".
+7. **Manifest** — `MANIFEST.txt` summarises everything for the model.
 
 So the model can **see** (key frames), **read** (transcript) and — with `--keep-audio` —
 **hear** (full soundtrack) the video. The transcript is plain text any model can read;

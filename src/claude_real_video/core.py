@@ -30,6 +30,24 @@ class Result:
     transcript_note: str = ""
     audio_path: str | None = None
     report_path: str | None = None
+    frames_json_path: str | None = None
+
+
+def _parse_showinfo_times(stderr: str) -> list[float]:
+    """Source-video timestamps of the frames an ffmpeg select pass emitted, in
+    output order, parsed from showinfo's stderr log (issue #7). showinfo runs
+    *after* select, so line i describes raw_{i+1:05d}.jpg exactly."""
+    times = []
+    for m in re.finditer(r"pts_time:\s*(-?[0-9]+(?:\.[0-9]+)?)", stderr or ""):
+        times.append(max(0.0, float(m.group(1))))
+    return times
+
+
+def _fmt_ts(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int(sec % 3600 // 60)
+    s = sec % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
 def fetch_video(src: str, out_dir: str, cookies: str | None = None, cookies_from_browser: str | None = None) -> str:
@@ -88,23 +106,28 @@ def _fps(video: str) -> float:
 
 
 def extract_frames(video: str, frames_dir: str, scene: float, fps_floor: float,
-                   anchors: list[int] | None = None) -> int:
+                   anchors: list[int] | None = None) -> tuple[int, list[float]]:
     """One chronological pass: every scene change OR one frame per `fps_floor`
     seconds, whichever comes first. A single select filter keeps the frames in
     time order, so dedup compares true neighbours (two passes used to interleave
     scene_/floor_ files out of order). `anchors` are extra frame numbers forced
     into the same pass (text-anchored extraction, issue #5) so ordering — and
-    therefore dedup — still holds. Returns the extracted count."""
+    therefore dedup — still holds. Returns (extracted count, per-frame source
+    timestamps in seconds — from showinfo, so VFR videos stay accurate)."""
     os.makedirs(frames_dir, exist_ok=True)
     every_n = max(1, round(_fps(video) * fps_floor))
     sel = f"gt(scene,{scene})+not(mod(n,{every_n}))"
     if anchors:
         sel += "+" + "+".join(f"eq(n,{n})" for n in anchors)
-    _run(["ffmpeg", "-i", video,
-          "-vf", f"select='{sel}',scale=640:-1",
-          "-vsync", "vfr", os.path.join(frames_dir, "raw_%05d.jpg"),
-          "-hide_banner", "-loglevel", "error"])
-    return len(glob.glob(os.path.join(frames_dir, "raw_*.jpg")))
+    # showinfo sits after select: its log lines are exactly the emitted frames,
+    # in order — that log is the only place the source PTS survives (issue #7).
+    r = _run(["ffmpeg", "-i", video,
+              "-vf", f"select='{sel}',showinfo,scale=640:-1",
+              "-vsync", "vfr", os.path.join(frames_dir, "raw_%05d.jpg"),
+              "-hide_banner", "-loglevel", "info"])
+    count = len(glob.glob(os.path.join(frames_dir, "raw_*.jpg")))
+    times = _parse_showinfo_times(r.stderr)
+    return count, (times if len(times) == count else [])
 
 
 def _scene_scores(video: str) -> list[tuple[int, float]]:
@@ -138,7 +161,7 @@ def _scene_scores(video: str) -> list[tuple[int, float]]:
 def extract_frames_adaptive(video: str, frames_dir: str, fps_floor: float,
                             window_s: float = 2.0, mult: float = 3.0,
                             min_content: float = 0.04,
-                            anchors: list[int] | None = None) -> int:
+                            anchors: list[int] | None = None) -> tuple[int, list[float]]:
     """Adaptive extraction for slow-changing content (issue #2): a frame is a
     keyframe when its scene score exceeds `mult` x the rolling average of the
     previous `window_s` seconds AND an absolute floor `min_content` — so gradual
@@ -169,16 +192,19 @@ def extract_frames_adaptive(video: str, frames_dir: str, fps_floor: float,
         picked = sorted(set(picked) | set(anchors))
     os.makedirs(frames_dir, exist_ok=True)
     expr = "+".join(f"eq(n,{n})" for n in picked)
-    _run(["ffmpeg", "-i", video,
-          "-vf", f"select='{expr}',scale=640:-1",
-          "-vsync", "vfr", os.path.join(frames_dir, "raw_%05d.jpg"),
-          "-hide_banner", "-loglevel", "error"])
-    return len(glob.glob(os.path.join(frames_dir, "raw_*.jpg")))
+    r = _run(["ffmpeg", "-i", video,
+              "-vf", f"select='{expr}',showinfo,scale=640:-1",
+              "-vsync", "vfr", os.path.join(frames_dir, "raw_%05d.jpg"),
+              "-hide_banner", "-loglevel", "info"])
+    count = len(glob.glob(os.path.join(frames_dir, "raw_*.jpg")))
+    times = _parse_showinfo_times(r.stderr)
+    return count, (times if len(times) == count else [])
 
 
 def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
                  max_frames: int = 150,
-                 dropped_dir: str | None = None) -> tuple[int, list[dict]]:
+                 dropped_dir: str | None = None,
+                 times: list[float] | None = None) -> tuple[int, list[dict]]:
     """Drop near-duplicate frames with two complementary detectors, both against
     a sliding window of the last `window` kept frames (the window catches A-B-A
     alternation — a shot the model has already seen doesn't come back just
@@ -213,6 +239,8 @@ def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
 
     Returns (kept_count, per-frame records for the optional report)."""
     frames = sorted(glob.glob(os.path.join(frames_dir, "*.jpg")))
+    if times is not None and len(times) != len(frames):
+        times = None  # count drifted (mixed dir?) — better no timestamps than wrong ones
     try:
         from PIL import Image, ImageChops
     except ImportError:
@@ -303,6 +331,7 @@ def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
                         mult += BUMP
         prev_coarse = h
         mult = max(1.0, mult * DECAY)
+        t = times[idx] if times is not None else None
         if keep:
             kept.append(f)
             recent.append(h)
@@ -311,7 +340,7 @@ def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
                 recent.pop(0)
                 recent_fine.pop(0)
             records.append({"name": os.path.basename(f), "dist": dist,
-                            "settled": settled, "via": via, "kept": True})
+                            "settled": settled, "via": via, "kept": True, "t": t})
         else:
             if dropped_dir:
                 os.makedirs(dropped_dir, exist_ok=True)
@@ -319,7 +348,7 @@ def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
             else:
                 os.remove(f)
             records.append({"name": os.path.basename(f), "dist": dist,
-                            "settled": settled, "via": None, "kept": False})
+                            "settled": settled, "via": None, "kept": False, "t": t})
 
     # cap: thin uniformly *after* dedup so the survivors stay spread across the video
     if max_frames and len(kept) > max_frames:
@@ -345,6 +374,27 @@ def dedup_frames(frames_dir: str, threshold: float = 8, window: int = 4,
         if rec["kept"]:
             rec["name"] = renames.get(rec["name"], rec["name"])
     return len(kept), records
+
+
+def write_frames_json(out_dir: str, records: list[dict]) -> str | None:
+    """frames.json — the per-frame source-video timestamp map (issue #7): which
+    second of the original video each kept frame_XXX.jpg came from, so a model
+    (or a RAG pipeline) can cite visual evidence with a timestamp and align
+    frames with transcript.json segments."""
+    kept = sorted((r for r in records if r["kept"] and r.get("t") is not None),
+                  key=lambda r: r["name"])
+    if not kept:
+        return None
+    import json as _json
+    p = os.path.join(out_dir, "frames.json")
+    with open(p, "w", encoding="utf-8") as f:
+        _json.dump({"frames": [{
+            "file": r["name"],
+            "timestamp_sec": round(r["t"], 3),
+            "timestamp": _fmt_ts(r["t"]),
+            "selection_reason": r.get("via") or "scene",
+        } for r in kept]}, f, ensure_ascii=False, indent=1)
+    return p
 
 
 def write_report(out_dir: str, records: list[dict], threshold: float, window: int) -> str:
@@ -668,7 +718,7 @@ def save_to_kb(kb_dir: str, manifest_path: str, src: str) -> str:
 
 _OWNED_DIRS = ("frames", "dropped", "grids")
 _OWNED_GLOBS = ("source.*", "audio.*", "transcript*", "MANIFEST.txt", "manifest.txt",
-                "viewer.html", "report.html", "grid*.jpg", "grid*.png")
+                "viewer.html", "report.html", "frames.json", "grid*.jpg", "grid*.png")
 
 
 def _prepare_out_dir(out_dir: str, overwrite: bool) -> None:
@@ -708,15 +758,18 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     dur = _duration(video)
     anchors = (_text_anchor_frames(_subtitle_cue_times(src, video, out_dir), _fps(video))
                if text_anchors else None)
-    extracted = (extract_frames_adaptive(video, frames_dir, fps_floor, anchors=anchors)
-                 if adaptive else extract_frames(video, frames_dir, scene, fps_floor, anchors=anchors))
+    extracted, frame_times = (
+        extract_frames_adaptive(video, frames_dir, fps_floor, anchors=anchors)
+        if adaptive else extract_frames(video, frames_dir, scene, fps_floor, anchors=anchors))
     if extracted == 0:
         raise RuntimeError(
             "No frames could be extracted — the download may be incomplete or the file "
             "is not a playable video (check ffmpeg is installed and the source plays).")
     kept, records = dedup_frames(frames_dir, dedup_threshold, dedup_window, max_frames,
-                                 dropped_dir=os.path.join(out_dir, "dropped") if report else None)
+                                 dropped_dir=os.path.join(out_dir, "dropped") if report else None,
+                                 times=frame_times or None)
     report_path = write_report(out_dir, records, dedup_threshold, dedup_window) if report else None
+    frames_json = write_frames_json(out_dir, records)
 
     # Text for the LLM: prefer subtitles the video already has (faster + more
     # accurate); only fall back to Whisper when there are none. Be honest about
@@ -756,6 +809,9 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         f"frames dir: {frames_dir}",
         f"transcript: {note}",
     ]
+    if frames_json:
+        lines.append(f"frame timestamps: {frames_json} "
+                     "(per-frame source-video timestamps — cite visual evidence with these)")
     if keep_audio:
         lines.append(f"audio: {audio_path or '(none — this video has no audio track)'}")
     lines.append("--- transcript ---")
@@ -766,4 +822,5 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     return Result(out_dir=out_dir, video=video, duration=dur, frames_dir=frames_dir,
                   frame_count=kept, extracted_frames=extracted,
                   transcript_path=transcript, manifest_path=manifest,
-                  transcript_note=note, audio_path=audio_path, report_path=report_path)
+                  transcript_note=note, audio_path=audio_path, report_path=report_path,
+                  frames_json_path=frames_json)

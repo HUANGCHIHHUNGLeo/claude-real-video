@@ -90,6 +90,8 @@ def main() -> None:
     print(f"\n✓ Done → {r.out_dir}")
     print(f"  {r.frame_count} frames  (deduped from {r.extracted_frames} extracted)  in {r.frames_dir}")
     print(f"  manifest:   {r.manifest_path}")
+    if r.frames_json_path:
+        print(f"  timestamps: {r.frames_json_path}  (per-frame source-video timestamps)")
     if args.viewer:
         from .viewer import write_viewer
         vsrc = os.path.join(r.out_dir, "source.mp4")

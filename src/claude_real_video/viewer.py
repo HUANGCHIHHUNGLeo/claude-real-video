@@ -11,6 +11,19 @@ import os
 
 def write_viewer(out_dir: str, video_path: str | None) -> str:
     frames = sorted(glob.glob(os.path.join(out_dir, "frames", "*.jpg")))
+    # frames.json (issue #7): per-frame source timestamps — shown on each cell,
+    # and the lightbox gets a "play from here" jump when the video is present.
+    ts: dict[str, float] = {}
+    ts_label: dict[str, str] = {}
+    fj = os.path.join(out_dir, "frames.json")
+    if os.path.exists(fj):
+        try:
+            import json as _json
+            for fr in _json.load(open(fj, encoding="utf-8")).get("frames", []):
+                ts[fr["file"]] = float(fr["timestamp_sec"])
+                ts_label[fr["file"]] = str(fr.get("timestamp", ""))[3:11]  # MM:SS.mmm
+        except Exception:
+            ts, ts_label = {}, {}
     transcript = ""
     tpath = os.path.join(out_dir, "transcript.txt")
     if os.path.exists(tpath):
@@ -25,12 +38,16 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
         if not rel.startswith(".."):
             video_tag = f'<video src="{html.escape(rel)}" controls playsinline></video>'
 
-    cells = "".join(
-        f'<a href="frames/{os.path.basename(f)}" target="_blank">'
-        f'<img src="frames/{os.path.basename(f)}" loading="lazy">'
-        f'<span>{os.path.basename(f)}</span></a>'
-        for f in frames
-    )
+    def _cell(f: str) -> str:
+        name = os.path.basename(f)
+        t = ts.get(name)
+        tattr = f' data-t="{t}"' if t is not None else ""
+        label = html.escape(name) + (f" · {ts_label[name]}" if name in ts_label else "")
+        return (f'<a href="frames/{name}" target="_blank"{tattr}>'
+                f'<img src="frames/{name}" loading="lazy">'
+                f'<span>{label}</span></a>')
+
+    cells = "".join(_cell(f) for f in frames)
 
     page = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>crv viewer</title>
@@ -78,6 +95,7 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
   <div class="nav prev" onclick="lbStep(-1)">&#8249;</div>
   <img id="lb-img" alt="">
   <div class="cap" id="lb-cap"></div>
+  <div class="cap"><a id="lb-jump" style="color:#e8b64c;cursor:pointer;display:none"></a></div>
   <div class="hint">&larr; &rarr; browse &middot; ESC close &middot; click outside to close</div>
   <div class="nav next" onclick="lbStep(1)">&#8250;</div>
 </div>
@@ -86,10 +104,17 @@ def write_viewer(out_dir: str, video_path: str | None) -> str:
   var links = Array.prototype.slice.call(document.querySelectorAll(".grid a"));
   var idx = -1, lb = document.getElementById("lb"),
       im = document.getElementById("lb-img"), cap = document.getElementById("lb-cap");
+  var jump = document.getElementById("lb-jump"), vid = document.querySelector("video");
   function show(i) {{
     idx = (i + links.length) % links.length;
     im.src = links[idx].getAttribute("href");
     cap.textContent = links[idx].querySelector("span").textContent + "  (" + (idx + 1) + "/" + links.length + ")";
+    var t = links[idx].getAttribute("data-t");
+    if (vid && t !== null) {{
+      jump.style.display = "inline";
+      jump.textContent = "▶ play video from here";
+      jump.onclick = function () {{ vid.currentTime = parseFloat(t); lbClose(); vid.play(); vid.scrollIntoView({{behavior:"smooth"}}); }};
+    }} else {{ jump.style.display = "none"; }}
     lb.classList.add("open");
   }}
   window.lbClose = function () {{ lb.classList.remove("open"); }};
