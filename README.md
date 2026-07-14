@@ -243,21 +243,15 @@ not something needed to make a video AI-readable.
 
 ## crv Pro — understand *how* a video was shot
 
-**The free version tells your AI what's on screen. crv Pro tells it how it was shot — and why it works.** Camera moves, editing rhythm, action bursts, plus a one-flag `--breakdown` report: hook analysis, pacing curve, camera language, Reels-algorithm lens, and a rubric your own LLM completes into a full video teardown.
+The free tool gives your AI keyframes and a transcript — enough to know **what** a video is about. **crv Pro adds everything else: how it's shot, how it's cut, how it's spoken, what it feels like.** All computed on your machine, written as plain text any LLM can read.
 
-This free tool tells an LLM **what** is on screen. A stack of keyframes can't tell it **how** the video moves — the camera work and the pacing.
+- **Camera & pacing (`--motion`)** — every shot auto-labelled: static, pan, tilt, zoom, handheld. Full shot table: per-shot duration, cuts per minute, pacing across open/middle/close. High-motion shots get 0.2s-apart burst frames.
+- **Sound & emotion (`--senses`)** — voice emotion, tone curves and audio events (laughter, SFX, ambience) timestamped segment by segment. Vocals and music auto-separated: emotion reads the clean voice, music gets its own BPM + energy track. No-dialogue footage (MVs, film) falls back to reading mood from color and light.
+- **Interactive viewer (`--viewer`)** — one self-contained web page per analysis: the video, a clickable event timeline that jumps to the second, a transcript that highlights along with playback. EN / 繁中 / 简中.
+- **Two reports, one flag (`--ai-report`)** — with your own API key: one report on how it's shot, one on what it says.
+- **Breakdown report (`--breakdown`)** — hook analysis, pacing curve, camera language, and a rubric your own LLM completes into a full teardown.
 
-**crv Pro** adds everything the free version can't hear or feel:
-
-- **Camera-move classification** — every shot labelled static / pan / tilt / zoom / handheld (tested against a manually labeled internal sample set — public benchmark methodology is in progress)
-- **Editing rhythm** — shot list, cuts per minute, and how pacing shifts across the video
-- **Perception timeline** — the subtle things frames can't show: gestures and expressions (a smile, a hand raised, pointing), voice pitch rises and pauses, speaker emotion, and non-speech sound events — all timestamped
-- **A breakdown report** — hook analysis, pacing curve, camera language, and a rubric your own LLM completes into a full teardown
-- **Three modes** — `--mode watch` (understand the content), `--mode creator` (reverse-engineer the making), `--mode full`
-
-**Recent Pro updates** (July 2026): a music-state timeline (hear the score building, peaking, falling away — with BPM), voice emotion read from the isolated voice instead of the full mix, an interactive `--viewer` dashboard with a clickable synced timeline, and richer gesture narration ("hand raised — right hand, while walking toward frame right").
-
-All as plain text in the same manifest, all computed on your machine. One-time founder price **$19**:
+One-time founder price **$19**:
 
 - **Buy on Capafy** (instant download, license key included): https://capafy.ai/agent/llm-real-video-pro-let-any-llm-watch-videos/5451082151
 - Product page & demo: https://leoaido.com/crv-pro/
