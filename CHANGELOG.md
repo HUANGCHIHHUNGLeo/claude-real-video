@@ -1,3 +1,7 @@
+## 0.7.7 (2026-07-15)
+- **faster-whisper support — new `[fast]` extra.** `pip install 'claude-real-video[fast]'` and crv automatically transcribes in-process with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2): same model names, same `transcript.txt` + `transcript.json` output, several times faster and lighter on RAM than the whisper CLI. No new flags — if the package is importable it's used, and any failure falls back to the `whisper` CLI automatically.
+- The "install whisper" hint shown when no transcriber is present now mentions both options.
+
 ## 0.7.6 (2026-07-13)
 - **Per-frame source timestamps — `frames.json`** (issue #7). Every kept `frame_XXX.jpg` now knows exactly which second of the original video it came from, surviving extraction, deduplication, `--max-frames` thinning and renaming. A machine-readable `frames.json` is written next to the frames: `{"file", "timestamp_sec", "timestamp", "selection_reason"}` — so you can cite visual evidence with a timestamp, align frames with `transcript.json` segments, or feed the mapping into video-RAG / lecture-note pipelines.
 - Timestamps come from ffmpeg's `showinfo` log on the same select pass (no extra decode pass, VFR-accurate); the adaptive extractor gets them the same way. If the log and the extracted files ever disagree in count, crv writes no timestamps rather than wrong ones.
