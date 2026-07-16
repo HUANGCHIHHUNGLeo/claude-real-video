@@ -4,6 +4,13 @@
 
 **Let Claude — or any LLM — actually watch a video.**
 
+```bash
+pip install "claude-real-video[whisper]"
+npx skills add HUANGCHIHHUNGLeo/claude-real-video   # one command, installs the skill into Claude Code, Cursor, Codex, Copilot, Gemini CLI & 50+ agent hosts
+```
+
+Then paste a video link into your agent and ask about it. (CLI-only use? `crv "<url>"` works with just the pip install.)
+
 > **Naming:** crv is the short name for claude-real-video (the PyPI package). The paid add-on, **crv Pro**, is sold on Capafy under the listing name "llm-real-video Pro".
 
 ![demo](docs/demo.gif)
