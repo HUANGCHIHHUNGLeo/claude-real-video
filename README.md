@@ -10,7 +10,7 @@
 
 > Same 58-second clip: fixed 1 fps sampling = **58 frames**. crv keeps the **26 that actually differ** — and `--grid` packs them into **3 contact sheets**. Fewer tokens, nothing missed.
 
-> **This free version lets your AI *see* the video.** [crv Pro](https://leoaido.com/crv-pro/) lets it *understand* it — how it was shot (cut rhythm, camera moves) plus a timestamped timeline of what frames can't show: gestures, expressions, voice pitch shifts, emotion, sound events. One-time founder price $19 — [get it on Capafy](https://capafy.ai/agent/llm-real-video-pro-let-any-llm-watch-videos/5451082151).
+> **This free version lets your AI *see* the video.** [crv Pro](https://leoaido.com/crv-pro/) lets it *understand* it — how it was shot (cut rhythm, camera moves) plus a timestamped timeline of what frames can't show: gestures, expressions, voice pitch shifts, emotion, sound events. One-time founder price $19 through July 31 ($29 from August 1) — [get it on Capafy](https://capafy.ai/agent/llm-real-video-pro-let-any-llm-watch-videos/5451082151).
 
 Most AI tools don't really *see* a video. Paste a YouTube link into ChatGPT and it
 reads the **transcript**, not the picture. Claude won't take a video file at all.
@@ -251,7 +251,7 @@ The free tool gives your AI keyframes and a transcript — enough to know **what
 - **Two reports, one flag (`--ai-report`)** — with your own API key: one report on how it's shot, one on what it says.
 - **Breakdown report (`--breakdown`)** — hook analysis, pacing curve, camera language, and a rubric your own LLM completes into a full teardown.
 
-One-time founder price **$19**:
+One-time founder price **$19** through July 31 — **$29** from August 1:
 
 - **Buy on Capafy** (instant download, license key included): https://capafy.ai/agent/llm-real-video-pro-let-any-llm-watch-videos/5451082151
 - Product page & demo: https://leoaido.com/crv-pro/

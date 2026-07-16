@@ -122,7 +122,7 @@ def main() -> None:
             rate = (r.frame_count - 1) / r.duration * 60
             print(f"  pro:        this video has {r.frame_count - 1} real visual changes (~{rate:.0f}/min).")
             print("              Pro labels each camera move (pan/zoom/handheld), reads voice emotion,")
-            print("              and builds a clickable timeline → https://leoaido.com/crv-pro/  ($19 founder price)")
+            print("              and builds a clickable timeline → https://leoaido.com/crv-pro/  ($19 founder price until Jul 31, then $29)")
         else:
             print("  pro:        camera-motion + voice-emotion analysis → https://leoaido.com/crv-pro/")
 
