@@ -31,6 +31,11 @@ def main() -> None:
                          "or embedded track) — for videos where meaning changes faster than "
                          "pixels: burned-in captions, lecture slides, screen recordings. "
                          "At most one forced frame per second; scene detection unchanged")
+    ap.add_argument("--speakers", action="store_true",
+                    help="Label who spoke when: offline speaker diarization "
+                         "(sherpa-onnx, no account/token needed — models auto-download "
+                         "on first use). Transcript lines get [SPEAKER_00]-style prefixes; "
+                         "needs: pip install 'claude-real-video[speakers]'")
     ap.add_argument("--lang", default="auto", help="Whisper language, e.g. en / zh / auto (default: auto)")
     ap.add_argument("--cookies", default=None,
                     help="Netscape cookie file for sites that need login (your own, authorised use only)")
@@ -81,7 +86,7 @@ def main() -> None:
             do_transcribe=not args.no_transcribe,
             whisper_model=args.whisper_model, dedup_threshold=args.dedup_threshold,
             dedup_window=args.dedup_window, keep_audio=args.keep_audio, report=args.report,
-            why=args.why, overwrite=args.overwrite,
+            why=args.why, overwrite=args.overwrite, speakers=args.speakers,
         )
     except Exception as e:  # noqa: BLE001 — surface a clean message to the user
         print(f"error: {e}", file=sys.stderr)

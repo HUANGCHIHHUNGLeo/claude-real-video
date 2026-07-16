@@ -37,6 +37,8 @@ Want to eyeball what the model will see first? Add `--viewer` — it writes a lo
 
 **Text-heavy content** (lecture slides, screen recordings, talking-head explainers): add `--text-anchors` — extra frames are forced at subtitle-cue timestamps, so each spoken segment gets a matching visual even when the scene barely changes. Needs a sidecar `.srt`/`.vtt` or an embedded subtitle track — captions burned into the pixels can't be detected. At most one forced frame per second; scene detection is untouched.
 
+**Multi-speaker content** (interviews, podcasts, meetings): add `--speakers` — every transcript line gets a speaker label (`[SPEAKER_00]`, `[SPEAKER_01]`, …) so the model can follow who said what. Runs a local diarization model (45 MB, downloads once, no account or token needed). Install with `pip install "claude-real-video[speakers]"`.
+
 Not doing LLM work? It also works as a **general-purpose video keyframe extractor** —
 scene-change detection + dedup, no ML models to download.
 
@@ -158,6 +160,7 @@ crv "https://..." --cookies cookies.txt
 | `--max-frames` | `150` | hard cap on total frames |
 | `--adaptive` | off | adaptive scene detection: catches slow morphs (2-3s squash/stretch, gradual pans) a fixed threshold misses, by comparing each frame against its rolling neighbourhood |
 | `--text-anchors` | off | force extra frames at subtitle-cue timestamps (sidecar `.srt`/`.vtt` or embedded track) — for videos where meaning changes faster than pixels; at most one forced frame per second |
+| `--speakers` | off | label every transcript line with the speaker (`[SPEAKER_00]` …) via local diarization — needs `pip install "claude-real-video[speakers]"`, 45 MB model downloads once |
 | `--lang` | `auto` | Whisper language (`en`, `zh`, `auto`, ...) |
 | `--whisper-model` | `base` | Whisper model for transcription (`tiny`/`base`/`small`/`medium`/`large`/`turbo` — base is fast; **want sharper transcripts? `--whisper-model turbo` is one flag away**: close to large-v2 accuracy at ~8x the speed, one-time 1.6GB download, ~6GB memory) |
 | `--dedup-threshold` | `8` | % of pixels that must change for a frame to count as new; higher = fewer frames (the settled-local detector's gate scales with it too) |

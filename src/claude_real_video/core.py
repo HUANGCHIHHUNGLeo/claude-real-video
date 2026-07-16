@@ -709,6 +709,34 @@ def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base") 
             pass
 
 
+def _label_transcript_speakers(out_dir: str, transcript: str, turns: list[dict]) -> int:
+    """Merge diarization turns into the transcript artifacts (issue: --speakers):
+    transcript.json segments gain a "speaker" field, and transcript.txt is
+    regenerated one segment per line with a [SPEAKER_XX] prefix — so the
+    manifest (written afterwards, from transcript.txt) carries the labels too.
+    Returns the number of distinct speakers heard in the transcript."""
+    import json as _json
+    from .speakers import assign_speakers
+    jpath = os.path.join(out_dir, "transcript.json")
+    if not turns or not os.path.exists(jpath):
+        return 0
+    try:
+        data = _json.load(open(jpath, encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    segments = data.get("segments", [])
+    if not segments:
+        return 0
+    assign_speakers(segments, turns)
+    with open(jpath, "w", encoding="utf-8") as f:
+        _json.dump(data, f, ensure_ascii=False, indent=1)
+    with open(transcript, "w", encoding="utf-8") as f:
+        f.write("\n".join(
+            (f"[{s['speaker']}] {s['text']}" if s.get("speaker") else s["text"])
+            for s in segments) + "\n")
+    return len({s["speaker"] for s in segments if s.get("speaker")})
+
+
 def make_grids(frames_dir: str, out_dir: str, cols: int = 3, rows: int = 3,
                cell_width: int = 480) -> list[str]:
     """Tile the kept frames, in order, into contact-sheet grids. A model reading
@@ -786,7 +814,14 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
             max_frames: int = 150, lang: str | None = "auto", cookies: str | None = None,
             do_transcribe: bool = True, dedup_threshold: float = 8, dedup_window: int = 4,
             keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base", cookies_from_browser: str | None = None,
-            overwrite: bool = False) -> Result:
+            overwrite: bool = False, speakers: bool = False) -> Result:
+    if speakers:
+        # fail fast — before any download/extraction work happens
+        from .speakers import available as _speakers_available
+        if not _speakers_available():
+            raise RuntimeError(
+                "--speakers needs the optional diarization dependencies. "
+                "Install them with: pip install 'claude-real-video[speakers]'")
     # 2026-07-10 (codex review): a reused output dir mixed frames/audio from the
     # previous video into the new result. Refuse dirty dirs unless --overwrite,
     # and on overwrite remove every artifact we own before running.
@@ -827,6 +862,21 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         transcript = transcribe(video, out_dir, lang, model=whisper_model)
         note = f"{transcript} (transcribed by whisper)" if transcript else "(none — transcription failed)"
 
+    # Optional speaker diarization (who spoke when): label each transcript
+    # segment with SPEAKER_XX so multi-person conversations stay readable.
+    speakers_note = None
+    if speakers:
+        if not _has_audio(video):
+            speakers_note = "(skipped — this video has no audio track)"
+        elif not transcript:
+            speakers_note = "(skipped — no transcript to label; diarization labels transcript segments)"
+        else:
+            from .speakers import diarize
+            turns = diarize(video)
+            n = _label_transcript_speakers(out_dir, transcript, turns)
+            speakers_note = (f"{n} speaker(s) detected — transcript segments labelled [SPEAKER_XX]"
+                             if n else "(none detected — transcript left unlabelled)")
+
     # Optionally keep the full original soundtrack (music + speech + effects) for
     # models that can listen to audio directly — the transcript only has the words.
     audio_path = extract_full_audio(video, out_dir) if keep_audio else None
@@ -847,6 +897,8 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         f"frames dir: {frames_dir}",
         f"transcript: {note}",
     ]
+    if speakers_note:
+        lines.append(f"speakers: {speakers_note}")
     if frames_json:
         lines.append(f"frame timestamps: {frames_json} "
                      "(per-frame source-video timestamps — cite visual evidence with these)")
