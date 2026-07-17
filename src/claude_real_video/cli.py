@@ -7,6 +7,15 @@ from .core import process
 
 
 def main() -> None:
+    # Windows consoles default to a legacy codepage (e.g. cp950 on zh-Hant),
+    # which cannot encode the ✓/→/— glyphs below and crashes the CLI on exit
+    # even though processing succeeded. Force UTF-8 so output is codepage-safe.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     ap = argparse.ArgumentParser(
         prog="claude-real-video",
         description="Let Claude (or any LLM) actually watch a video: scene-aware, "
