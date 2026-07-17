@@ -899,6 +899,14 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     ]
     if speakers_note:
         lines.append(f"speakers: {speakers_note}")
+    # simple temporal check (free tier): one conservative line, only when confident
+    try:
+        from .temporal_check import temporal_hint
+        _hint = temporal_hint(video)
+        if _hint:
+            lines.append(_hint)
+    except Exception:
+        pass
     if frames_json:
         lines.append(f"frame timestamps: {frames_json} "
                      "(per-frame source-video timestamps — cite visual evidence with these)")
