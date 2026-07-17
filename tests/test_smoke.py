@@ -15,6 +15,8 @@ def test_cli_help():
         [sys.executable, "-m", "claude_real_video", "--help"],
         capture_output=True,
         text=True,
+        encoding="utf-8",  # CLI forces UTF-8 output; decode it as such, not the
+        errors="replace",  # host locale (cp950 on zh-Hant Windows would choke)
     )
     assert result.returncode == 0
     assert "crv" in result.stdout.lower() or "video" in result.stdout.lower()
