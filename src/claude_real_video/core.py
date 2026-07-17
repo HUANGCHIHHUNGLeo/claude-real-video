@@ -935,6 +935,11 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
             segments = None
     if segments:
         from .timeline_lite import manifest_lines as _timeline_lines
+        # The timeline quotes transcript lines outside the fence below, so the
+        # same neutralization applies: a caption spelling out our end marker
+        # must not be able to fake a closed boundary from inside a quote.
+        segments = [dict(s, text=(s.get("text") or "").replace(TRANSCRIPT_END, "[end marker removed]"))
+                    for s in segments]
         kept_frames = [{"file": r["name"], "t": float(r["t"])}
                        for r in records if r["kept"] and r.get("t") is not None]
         try:
