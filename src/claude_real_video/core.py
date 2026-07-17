@@ -896,7 +896,8 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
             max_frames: int = 150, lang: str | None = "auto", cookies: str | None = None,
             do_transcribe: bool = True, dedup_threshold: float = 8, dedup_window: int = 4,
             keep_audio: bool = False, report: bool = False, why: str | None = None, whisper_model: str = "base", cookies_from_browser: str | None = None,
-            overwrite: bool = False, speakers: bool = False) -> Result:
+            overwrite: bool = False, speakers: bool = False,
+            export: str | None = None) -> Result:
     if speakers:
         # fail fast — before any download/extraction work happens
         from .speakers import available as _speakers_available
@@ -925,6 +926,14 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
                                  times=frame_times or None)
     report_path = write_report(out_dir, records, dedup_threshold, dedup_window) if report else None
     frames_json = write_frames_json(out_dir, records)
+    if export == "llc":
+        from .export_llc import write_llc
+        frames_list = [{"file": r["name"], "timestamp_sec": float(r["t"]),
+                        "selection_reason": r.get("via") or "scene"}
+                       for r in records if r["kept"] and r.get("t") is not None]
+        llc = write_llc(out_dir, src, float(dur), frames_list)
+        if llc:
+            print(f"  llc project: {llc} (open in lossless-cut — every scene is a segment)")
 
     # Text for the LLM: prefer subtitles the video already has (faster + more
     # accurate); only fall back to Whisper when there are none. Be honest about

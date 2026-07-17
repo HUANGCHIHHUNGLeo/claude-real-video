@@ -40,6 +40,11 @@ def main() -> None:
                          "or embedded track) — for videos where meaning changes faster than "
                          "pixels: burned-in captions, lecture slides, screen recordings. "
                          "At most one forced frame per second; scene detection unchanged")
+    ap.add_argument("--export", choices=["llc"], default=None,
+                    help="Also export the analysis for other tools. 'llc' writes a "
+                         "lossless-cut project (highlights.llc): every detected scene "
+                         "becomes a cut segment — open it, keep the highlights, delete "
+                         "the rest (issue #10)")
     ap.add_argument("--speakers", action="store_true",
                     help="Label who spoke when: offline speaker diarization "
                          "(sherpa-onnx, no account/token needed — models auto-download "
@@ -96,6 +101,7 @@ def main() -> None:
             whisper_model=args.whisper_model, dedup_threshold=args.dedup_threshold,
             dedup_window=args.dedup_window, keep_audio=args.keep_audio, report=args.report,
             why=args.why, overwrite=args.overwrite, speakers=args.speakers,
+            export=args.export,
         )
     except Exception as e:  # noqa: BLE001 — surface a clean message to the user
         print(f"error: {e}", file=sys.stderr)
