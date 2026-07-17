@@ -693,13 +693,17 @@ def _have_faster_whisper() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
-# sentinel: the VAD-gated engine ran fine and heard no speech at all
-_NO_SPEECH = "__no_speech__"
+# Gate verdicts for the VAD-gated engine. Typed statuses instead of a sentinel
+# (design credit: r/ClaudeAI feedback) — the fallback branch can only ever match
+# GATE_ERROR, so a valid empty result structurally cannot re-enter the ungated path.
+GATE_ACCEPTED = "accepted"    # speech found, transcript written
+GATE_NO_SIGNAL = "no_signal"  # engine ran fine, heard no speech — terminal verdict
+GATE_ERROR = "error"          # engine unavailable/crashed — fallback may run
 # set by transcribe() so the manifest can say so instead of "(transcription failed)"
 _last_run_no_speech = False
 
 
-def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> str | None:
+def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
     """In-process transcription via faster-whisper (CTranslate2) — same output
     files as the CLI path (transcript.txt + transcript.json), several times
     faster and lighter on RAM. Returns the transcript path, or None so the
@@ -707,7 +711,7 @@ def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: 
     try:
         from faster_whisper import WhisperModel
     except ImportError:
-        return None
+        return GATE_ERROR, None
     try:
         m = WhisperModel(model, device="auto", compute_type="auto")
         # vad_filter: Silero VAD gates what reaches the model — whisper's classic
@@ -723,17 +727,17 @@ def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: 
                 for s in seg_iter if s.text.strip()]
     except Exception as e:  # bad model name, OOM, corrupt audio — CLI may still work
         print(f"  ! faster-whisper failed (model={model}): {e}")
-        return None
+        return GATE_ERROR, None
     if not segs:
         # The gate ran and found NO speech — that is a result, not a failure.
         # Falling back to the ungated CLI here would reintroduce the exact
         # hallucination this path exists to prevent.
-        return _NO_SPEECH
+        return GATE_NO_SIGNAL, None
     _write_transcript_json(out_dir, segs)
     dst = os.path.join(out_dir, "transcript.txt")
     with open(dst, "w", encoding="utf-8") as f:
         f.write("\n".join(s["text"] for s in segs) + "\n")
-    return dst
+    return GATE_ACCEPTED, dst
 
 
 def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base") -> str | None:
@@ -753,12 +757,13 @@ def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base") 
     try:
         global _last_run_no_speech
         _last_run_no_speech = False
-        fast = _transcribe_faster_whisper(wav, out_dir, lang, model)
-        if fast == _NO_SPEECH:
+        status, fast = _transcribe_faster_whisper(wav, out_dir, lang, model)
+        if status == GATE_ACCEPTED:
+            return fast
+        if status == GATE_NO_SIGNAL:
             _last_run_no_speech = True
             return None
-        if fast:
-            return fast
+        # GATE_ERROR is the only status allowed to reach the ungated CLI fallback
         if not _have("whisper"):
             return None
         # json carries per-segment timestamps (saved as transcript.json); txt stays

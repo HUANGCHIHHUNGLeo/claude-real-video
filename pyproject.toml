@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-real-video"
-version = "0.7.14"
+version = "0.7.15"
 description = "Let Claude (or any LLM) actually watch a video — scene-aware, deduplicated frames + transcript, from a URL or local file."
 readme = "README.md"
 requires-python = ">=3.10"
