@@ -13,7 +13,7 @@ pip install "claude-real-video[whisper]"
 npx skills add HUANGCHIHHUNGLeo/claude-real-video   # one command, installs the skill into Claude Code, Cursor, Codex, Copilot, Gemini CLI & 50+ agent hosts
 ```
 
-Claude Code plugin marketplace (auto-updates):
+Claude Code plugin marketplace (enable auto-update in /plugin → Marketplaces if you want it):
 
 ```
 /plugin marketplace add HUANGCHIHHUNGLeo/claude-real-video
@@ -204,7 +204,7 @@ crv "https://..." --cookies cookies.txt
 | `--overwrite` | off | replace a previous analysis living in the output directory (without this, a non-empty output dir is refused to avoid mixing videos) |
 | `--scene` | `0.30` | scene-change sensitivity (lower = more frames) |
 | `--fps-floor` | `1.0` | at least one frame every N seconds |
-| `--max-frames` | `150` | hard cap on total frames |
+| `--max-frames` | auto: `clamp(150, duration×1.5, 600)` | hard cap on total frames (explicit value always wins) |
 | `--adaptive` | off | adaptive scene detection: catches slow morphs (2-3s squash/stretch, gradual pans) a fixed threshold misses, by comparing each frame against its rolling neighbourhood |
 | `--text-anchors` | off | force extra frames at subtitle-cue timestamps (sidecar `.srt`/`.vtt` or embedded track) — for videos where meaning changes faster than pixels; at most one forced frame per second |
 | `--speakers` | off | label every transcript line with the speaker (`[SPEAKER_00]` …) via local diarization — needs `pip install "claude-real-video[speakers]"`, 45 MB model downloads once |
@@ -247,7 +247,7 @@ print(r.frame_count, r.transcript_path)
 2. **Extract** — one chronological `ffmpeg select` pass grabs every scene change
    *plus* a density floor (at least one frame every `--fps-floor` seconds), so
    fast cuts and slow screencasts are both covered.
-3. **Dedup** — two detectors against a **sliding window** of the last
+3. **Dedup** — three channels against a **sliding window** of the last
    `--dedup-window` kept frames, so an A-B-A cutaway doesn't re-send a shot the
    model has already seen. A *global* channel measures real pixel difference
    (downscaled RGB, not a perceptual hash — hashes go blind on flat colours and
