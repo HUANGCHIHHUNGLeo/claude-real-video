@@ -1,5 +1,7 @@
 # claude-real-video
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.HUANGCHIHHUNGLeo%2Fclaude-real-video.svg)](https://mcptoplist.com/server/io.github.HUANGCHIHHUNGLeo%2Fclaude-real-video)
+
 [![PyPI](https://img.shields.io/pypi/v/claude-real-video)](https://pypi.org/project/claude-real-video/) [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/claude-real-video/) [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![HN front page](https://img.shields.io/badge/Hacker%20News-front%20page-orange)](https://news.ycombinator.com/item?id=48766005)
 
 [![LLM Real Video — Give Your LLM Eyes (60-second film)](https://img.youtube.com/vi/sw6_8E-57w4/maxresdefault.jpg)](https://youtu.be/sw6_8E-57w4)
