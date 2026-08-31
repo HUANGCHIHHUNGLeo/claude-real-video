@@ -6,12 +6,12 @@
     "url": "https://github.com/HUANGCHIHHUNGLeo/claude-real-video",
     "source": "github"
   },
-  "version": "0.10.2",
+  "version": "0.10.3",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "claude-real-video",
-      "version": "0.10.2",
+      "version": "0.10.3",
       "transport": {
         "type": "stdio"
       }

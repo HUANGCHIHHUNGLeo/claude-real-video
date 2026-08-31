@@ -889,9 +889,15 @@ def _subs_to_text(sub_path: str, out_txt: str) -> str | None:
     except OSError:
         return None
     lines: list[str] = []
+    seen_cue = False  # everything before the first timecode is file header
     for ln in raw.splitlines():
         s = ln.strip().lstrip("﻿").strip()  # drop BOM if present
-        if not s or s.startswith("WEBVTT") or s.isdigit() or "-->" in s:
+        if "-->" in s:
+            seen_cue = True
+            continue
+        # WEBVTT header block: "WEBVTT", "Kind: captions", "Language: en",
+        # NOTE/STYLE/REGION ... — none of it is spoken text.
+        if not seen_cue or not s or s.isdigit():
             continue
         s = re.sub(r"<[^>]+>", "", s)  # strip vtt inline tags like <v ->
         if s:

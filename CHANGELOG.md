@@ -1,3 +1,13 @@
+## 0.10.3 — 2026-08-31
+
+- **The caption file's header no longer opens the transcript.** A platform
+  `.vtt` starts with `WEBVTT` / `Kind: captions` / `Language: en`, and only
+  the first of those was being dropped — so since 0.10.2 made captions the
+  normal path for URL runs, every such `transcript.txt` began with two lines
+  nobody said. Everything ahead of the first timecode is file header by spec,
+  so that is what is skipped now; `NOTE`, `STYLE` and any header key added
+  later are covered too, and cue text is untouched.
+
 ## 0.10.2 — 2026-08-28
 
 - **URL downloads now use the platform's own captions** (#25, by @Daily-AC).
