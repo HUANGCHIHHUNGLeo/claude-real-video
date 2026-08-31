@@ -4,7 +4,9 @@ __pycache__/
 build/
 dist/
 .venv/
-.venv*/          # .venv312 這種帶版號的沒被 .venv/ 擋到，2026-07-30 因此把整個 venv commit 進去過
+# .venv312 這種帶版號的沒被 .venv/ 擋到，2026-07-30 因此把整個 venv commit 進去過。
+# 註解必須自己一行：gitignore 的 # 只有在行首才是註解，寫在 pattern 後面會被當成 pattern 的一部分。
+.venv*/
 crv-out/
 *.mp4
 *.wav
