@@ -25,6 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 whisper = ["openai-whisper>=20240930"]
 fast = ["faster-whisper>=1.1.0"]
+mlx = ["mlx-whisper>=0.4"]
 speakers = ["sherpa-onnx>=1.13.4", "numpy>=1.24"]
 mcp = ["mcp>=1.2"]
 

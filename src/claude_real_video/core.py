@@ -1058,6 +1058,30 @@ def _have_faster_whisper() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def _have_mlx_whisper() -> bool:
+    """mlx-whisper runs Whisper on the Apple-Silicon GPU/ANE via Apple's MLX — much
+    faster than faster-whisper's CPU-only CTranslate2. Gated to arm64 macOS so a
+    Linux/Intel host never selects a backend it cannot run."""
+    import importlib.util
+    import platform
+    return (platform.system() == "Darwin" and platform.machine() == "arm64"
+            and importlib.util.find_spec("mlx_whisper") is not None)
+
+
+# crv's --whisper-model names -> mlx-community HF repos of Apple-Silicon weights.
+# A value already containing "/" is treated as an explicit repo and passed through.
+_MLX_MODELS = {
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "medium": "mlx-community/whisper-medium-mlx",
+    "large-v2": "mlx-community/whisper-large-v2-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "turbo": "mlx-community/whisper-large-v3-turbo",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+
 # Gate verdicts for the VAD-gated engine. Typed statuses instead of a sentinel
 # (design credit: r/ClaudeAI feedback) — the fallback branch can only ever match
 # GATE_ERROR, so a valid empty result structurally cannot re-enter the ungated path.
@@ -1097,6 +1121,38 @@ def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: 
         # The gate ran and found NO speech — that is a result, not a failure.
         # Falling back to the ungated CLI here would reintroduce the exact
         # hallucination this path exists to prevent.
+        return GATE_NO_SIGNAL, None
+    _write_transcript_json(out_dir, segs)
+    dst = os.path.join(out_dir, "transcript.txt")
+    with open(dst, "w", encoding="utf-8") as f:
+        f.write("\n".join(s["text"] for s in segs) + "\n")
+    return GATE_ACCEPTED, dst
+
+
+def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
+    """Apple-Silicon GPU transcription via mlx-whisper — same output files as the
+    other backends (transcript.txt + transcript.json), on the Mac GPU/ANE. Returns a
+    GATE_* verdict + path; GATE_ERROR lets the caller fall back to another backend.
+    condition_on_previous_text=False cuts whisper's repetition-loop failure mode
+    (matching the faster-whisper path)."""
+    try:
+        import mlx_whisper
+    except ImportError:
+        return GATE_ERROR, None
+    repo = model if "/" in model else _MLX_MODELS.get(model, model)
+    try:
+        result = mlx_whisper.transcribe(
+            wav, path_or_hf_repo=repo,
+            language=(lang if lang and lang != "auto" else None),
+            condition_on_previous_text=False)
+    except Exception as e:  # bad repo, download failure, OOM — another backend may work
+        print(f"  ! mlx-whisper failed (model={model} -> {repo}): {e}")
+        return GATE_ERROR, None
+    segs = [{"start": round(float(s.get("start", 0)), 3),
+             "end": round(float(s.get("end", 0)), 3),
+             "text": (s.get("text") or "").strip()}
+            for s in (result.get("segments") or []) if (s.get("text") or "").strip()]
+    if not segs:
         return GATE_NO_SIGNAL, None
     _write_transcript_json(out_dir, segs)
     dst = os.path.join(out_dir, "transcript.txt")
@@ -1169,7 +1225,7 @@ def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "b
     """Optional: extract audio + transcribe. Prefers faster-whisper when the
     package is installed (pip install 'claude-real-video[fast]'), then in-process
     openai-whisper, and finally the `whisper` CLI."""
-    if not _have("whisper") and not _whisper_available() and not _have_faster_whisper():
+    if not _have("whisper") and not _whisper_available() and not _have_faster_whisper() and not _have_mlx_whisper():
         return None
     # audio.wav is a 16kHz mono *working file* for whisper only — the user-facing
     # keep_audio artifact is audio.m4a (extract_full_audio), so this one is
@@ -1185,12 +1241,23 @@ def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "b
     try:
         global _last_run_no_speech
         _last_run_no_speech = False
-        status, fast = _transcribe_faster_whisper(wav, out_dir, lang, model)
-        if status == GATE_ACCEPTED:
-            return fast
-        if status == GATE_NO_SIGNAL:
-            _last_run_no_speech = True
-            return None
+        # Prefer mlx-whisper on Apple Silicon (GPU/ANE, several× faster than
+        # faster-whisper's CPU-only CTranslate2), then faster-whisper (CPU), then the
+        # openai-whisper CLI fallback below. Each returns a GATE_* verdict:
+        # GATE_ACCEPTED wins; GATE_NO_SIGNAL is a terminal "no speech"; GATE_ERROR
+        # (backend missing/crashed) falls through to the next backend.
+        _backends = []
+        if _have_mlx_whisper():
+            _backends.append(_transcribe_mlx_whisper)
+        if _have_faster_whisper():
+            _backends.append(_transcribe_faster_whisper)
+        for _backend in _backends:
+            status, path = _backend(wav, out_dir, lang, model)
+            if status == GATE_ACCEPTED:
+                return path
+            if status == GATE_NO_SIGNAL:
+                _last_run_no_speech = True
+                return None
         # GATE_ERROR is the only status allowed to reach the ungated CLI fallback
         if not _have("whisper"):
             # No console script on PATH: on an isolated install the package is
@@ -1415,7 +1482,7 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         # Check for audio *before* blaming a missing whisper install — a silent
         # video would otherwise tell the user to go install whisper for nothing.
         note = "(none — this video has no subtitles and no audio track)"
-    elif not _have("whisper") and not _whisper_available() and not _have_faster_whisper():
+    elif not _have("whisper") and not _whisper_available() and not _have_faster_whisper() and not _have_mlx_whisper():
         note = "(none — no existing subtitles; install a transcriber: pip install 'claude-real-video[fast]' or pip install openai-whisper)"
     else:
         transcript = transcribe(video, out_dir, lang, model=whisper_model,
