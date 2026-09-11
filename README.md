@@ -194,6 +194,19 @@ pip install 'claude-real-video[fast]'
 If both are installed, faster-whisper wins; if it ever fails, crv falls back
 to the `whisper` CLI on its own.
 
+**Apple Silicon (M1–M4): GPU transcription.** Install the `[mlx]` extra and crv
+runs Whisper on the Mac's GPU through
+[mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) —
+a 21-minute talk that takes ~6 minutes on faster-whisper finishes in about a
+minute on an M4, with the same transcript. The Silero VAD gate still runs
+first, so music or silence never turns into invented captions; if the gate or
+mlx cannot run, crv drops back to faster-whisper, then the CLI. Contributed by
+[@blazejp83](https://github.com/blazejp83) (#28).
+
+```bash
+pip install 'claude-real-video[mlx]'
+```
+
 Works on **macOS, Windows, and Linux** — Python 3.10+.
 
 ---

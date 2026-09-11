@@ -1,3 +1,19 @@
+## 0.10.5 — 2026-09-11
+
+- **Apple Silicon GPU transcription** (#28, by @blazejp83). A new `[mlx]`
+  extra runs Whisper through mlx-whisper on M-series Macs: a 21-minute talk
+  went from 381 s on faster-whisper to 62 s on an M4, transcript identical.
+  Same output files, no new flags — install it and crv picks it up.
+- **The no-speech guarantee holds on the new engine.** mlx-whisper has no
+  voice-activity detection of its own, so crv runs the Silero VAD in front of
+  it and only transcribes the stretches that contain speech; silent, music-only
+  or applause-only audio still yields the honest "no speech" note. If the VAD
+  cannot reach a verdict, or mlx fails, the run falls back to faster-whisper
+  and then the CLI rather than transcribing ungated. Timestamps are mapped
+  back to the original audio and clamped to the clip.
+- `--whisper-model large` now maps to `large-v3` on the mlx path, and the
+  `[mlx]` extra pins faster-whisper ≥ 1.2.0 for the VAD it borrows.
+
 ## 0.10.4 — 2026-09-11
 
 - **yt-dlp floor raised to 2026.8.19.** YouTube changed its player checks
