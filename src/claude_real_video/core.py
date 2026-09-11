@@ -1097,7 +1097,7 @@ _last_run_no_speech = False
 VAD_SPEECH = "speech"          # speech found; .audio holds it with the silence removed
 VAD_SILENT = "silent"          # the gate ran and heard no speech at all
 VAD_FAILED = "failed"          # the gate itself broke (ONNX/Silero) — no verdict to trust
-VAD_UNREADABLE = "unreadable"  # the *file* could not be decoded — not evidence of silence
+VAD_UNREADABLE = "unreadable"  # the *file* could not be decoded — no verdict either
 
 # SpeechTimestampsMap.get_original_time only grew its is_end argument in
 # faster-whisper 1.2.0; on 1.1.x the call below is a TypeError. Checked rather
@@ -1121,13 +1121,12 @@ def _vad_speech_audio(wav: str) -> _VadGate:
     vad_filter does — the non-speech stretches whisper hallucinates captions over
     are physically gone before the engine ever sees the audio.
 
-    The two failure verdicts are deliberately different. VAD_FAILED (Silero/ONNX
-    threw) means we have no opinion about this file and must not pretend we do —
-    the caller gives up so the chain reaches a backend that gates itself.
-    VAD_UNREADABLE (the decode threw) is not a gate failure: the file crv passes in
-    is one ffmpeg just wrote, so this means a broken/empty wav that every backend
-    is about to fail on too — refusing there would cost a transcript without
-    buying any hallucination safety, so the engine still gets its turn.
+    The two failure verdicts are reported apart so the log names what broke, but
+    neither is ever a pass: VAD_FAILED is Silero/ONNX throwing, VAD_UNREADABLE is
+    the decode throwing, and in both cases we have no opinion about this file and
+    must not pretend we do. Decoding here is PyAV's while mlx loads audio through
+    its own ffmpeg, so "we could not read it" says nothing about whether mlx
+    could — treating it as a free pass would be a hole straight through the gate.
 
     Silero ships inside faster-whisper, so an absent (or too old) faster-whisper
     raises ImportError for the caller to decide on."""
@@ -1237,7 +1236,8 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
     # exact failure the faster-whisper path exists to prevent: whisper inventing a
     # caption over silence/music (observed: an 8s music-only clip yielding
     # "I'll see you next time"). So gate the same way — Silero VAD first, no speech
-    # chunks -> GATE_NO_SIGNAL, a terminal verdict, mlx never runs.
+    # chunks -> GATE_NO_SIGNAL, a terminal verdict, mlx never runs. Nothing but a
+    # clean VAD_SPEECH verdict gets mlx started: no gate, no transcription.
     try:
         gate = _vad_speech_audio(wav)
     except ImportError as e:
@@ -1251,15 +1251,18 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
         # faster-whisper path. Handing the file to mlx anyway would reintroduce
         # the hallucination this gate exists to prevent.
         return GATE_NO_SIGNAL, None
-    if gate.verdict == VAD_FAILED:
-        # No working gate, so no mlx: hand the file on to a backend that brings
-        # its own (faster-whisper), rather than transcribing it unguarded here.
+    if gate.verdict != VAD_SPEECH:
+        # Gate broken (VAD_FAILED) or audio undecodable (VAD_UNREADABLE): either
+        # way there is no verdict, so mlx does not run. Fail closed — PyAV failing
+        # to decode is no evidence that mlx's own ffmpeg loader will, and letting
+        # it try anyway would be an ungated transcription, the one thing this
+        # gate exists to prevent. The chain falls to faster-whisper, which brings
+        # its own vad_filter.
         return GATE_ERROR, None
-    source = gate.audio if gate.verdict == VAD_SPEECH else wav
     repo = model if "/" in model else _MLX_MODELS.get(model, model)
     try:
         result = mlx_whisper.transcribe(
-            source, path_or_hf_repo=repo,
+            gate.audio, path_or_hf_repo=repo,
             language=(lang if lang and lang != "auto" else None),
             condition_on_previous_text=False)
     except Exception as e:  # bad repo, download failure, OOM — another backend may work

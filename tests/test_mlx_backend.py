@@ -30,13 +30,13 @@ def _cleanup_fake_mlx():
 
 @pytest.fixture(autouse=True)
 def _stub_vad(monkeypatch):
-    """Neutralise the Silero pre-gate (VAD_UNREADABLE = the file could not be
-    decoded, which lets the engine run on the original path) so the tests below
-    exercise the mlx engine itself. A real probe needs faster-whisper, which the
-    bare CI install does not have; the VAD tests opt out of this stub explicitly."""
+    """Wave the Silero pre-gate through — VAD_SPEECH, handing the engine the path it
+    was given and no timestamp map — so the tests below exercise the mlx engine
+    itself. A real probe needs faster-whisper, which the bare CI install does not
+    have; the VAD tests opt out of this stub explicitly."""
     from claude_real_video import core
     monkeypatch.setattr(core, "_vad_speech_audio",
-                        lambda wav: core._VadGate(core.VAD_UNREADABLE))
+                        lambda wav: core._VadGate(core.VAD_SPEECH, wav))
 
 
 def test_model_name_mapping():
@@ -132,19 +132,23 @@ def test_vad_pre_gate_blocks_mlx_on_silence(tmp_path, monkeypatch):
     assert not os.path.exists(os.path.join(str(tmp_path), "transcript.txt"))
 
 
-def test_vad_pre_gate_unreadable_audio_lets_mlx_try(tmp_path, monkeypatch):
-    """An undecodable file is not a silence verdict — and every backend is about to
-    fail on it anyway — so the engine still gets its turn on the original path."""
+def test_unreadable_audio_is_an_error_not_a_free_pass(tmp_path, monkeypatch):
+    """A file the gate could not decode is not a file mlx may transcribe ungated:
+    the decode here is PyAV's, mlx loads audio through its own ffmpeg, so one
+    failing says nothing about the other. Fail closed and let the chain reach
+    faster-whisper, which gates itself."""
     called = []
-    _install_fake_mlx(lambda wav, **kw: called.append(wav) or {
-        "segments": [{"start": 0, "end": 1, "text": "hi"}]})
+    _install_fake_mlx(lambda a, **kw: called.append(a) or {
+        "segments": [{"start": 0, "end": 1, "text": "invented"}]})
 
     from claude_real_video import core
     monkeypatch.setattr(core, "_vad_speech_audio",
                         lambda wav: core._VadGate(core.VAD_UNREADABLE))
 
-    status, _ = core._transcribe_mlx_whisper("audio.wav", str(tmp_path), "en", "turbo")
-    assert status == core.GATE_ACCEPTED and called == ["audio.wav"]
+    status, path = core._transcribe_mlx_whisper("audio.wav", str(tmp_path), "en", "turbo")
+    assert status == core.GATE_ERROR and path is None
+    assert called == []                                            # mlx never ran
+    assert not os.path.exists(os.path.join(str(tmp_path), "transcript.txt"))
 
 
 def test_missing_faster_whisper_refuses_rather_than_ungated(tmp_path, monkeypatch):
