@@ -1075,6 +1075,7 @@ _MLX_MODELS = {
     "base": "mlx-community/whisper-base-mlx",
     "small": "mlx-community/whisper-small-mlx",
     "medium": "mlx-community/whisper-medium-mlx",
+    "large": "mlx-community/whisper-large-v3-mlx",
     "large-v2": "mlx-community/whisper-large-v2-mlx",
     "large-v3": "mlx-community/whisper-large-v3-mlx",
     "turbo": "mlx-community/whisper-large-v3-turbo",
@@ -1090,6 +1091,35 @@ GATE_NO_SIGNAL = "no_signal"  # engine ran fine, heard no speech — terminal ve
 GATE_ERROR = "error"          # engine unavailable/crashed — fallback may run
 # set by transcribe() so the manifest can say so instead of "(transcription failed)"
 _last_run_no_speech = False
+
+
+VAD_SPEECH = "speech"      # speech found; `audio` holds it with the silence removed
+VAD_SILENT = "silent"      # the gate ran and heard no speech at all
+VAD_UNKNOWN = "unknown"    # the audio could not be read — not evidence of silence
+
+
+def _vad_speech_audio(wav: str):
+    """Silero-gate `wav` down to just its speech, the way faster-whisper's
+    vad_filter does: return (VAD_SPEECH, audio, tsmap) where `audio` is 16kHz mono
+    holding only the speech chunks — the non-speech stretches whisper hallucinates
+    captions over are physically gone — and `tsmap` puts the resulting timestamps
+    back on the original timeline. (VAD_SILENT, None, None) when the file holds no
+    speech, (VAD_UNKNOWN, None, None) when it could not be decoded. Silero ships
+    inside faster-whisper, so an absent faster-whisper raises ImportError for the
+    caller to decide on."""
+    import numpy as np
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import SpeechTimestampsMap, VadOptions, get_speech_timestamps
+    try:
+        audio = decode_audio(wav, sampling_rate=16000)
+        chunks = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=500))
+    except Exception as e:
+        print(f"  ! VAD pre-gate could not read {os.path.basename(wav)}: {e}")
+        return VAD_UNKNOWN, None, None
+    if not chunks:
+        return VAD_SILENT, None, None
+    speech = np.concatenate([audio[c["start"]:c["end"]] for c in chunks])
+    return VAD_SPEECH, speech, SpeechTimestampsMap(chunks, 16000)
 
 
 def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
@@ -1139,19 +1169,46 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
         import mlx_whisper
     except ImportError:
         return GATE_ERROR, None
+    # mlx-whisper has no VAD of its own. Running it ungated would reintroduce the
+    # exact failure the faster-whisper path exists to prevent: whisper inventing a
+    # caption over silence/music (observed: an 8s music-only clip yielding
+    # "I'll see you next time"). So gate the same way — Silero VAD first, no speech
+    # chunks -> GATE_NO_SIGNAL, a terminal verdict, mlx never runs.
+    try:
+        verdict, speech, tsmap = _vad_speech_audio(wav)
+    except ImportError:
+        # Silero ships inside faster-whisper, which [mlx] depends on. Missing it
+        # means a hand-assembled env; refuse rather than transcribe ungated.
+        print("  ! mlx-whisper needs faster-whisper for its VAD pre-gate "
+              "(pip install 'claude-real-video[mlx]') — skipping mlx backend")
+        return GATE_ERROR, None
+    if verdict == VAD_SILENT:
+        # The gate ran and found NO speech — terminal, exactly as on the
+        # faster-whisper path. Handing the file to mlx anyway would reintroduce
+        # the hallucination this gate exists to prevent.
+        return GATE_NO_SIGNAL, None
+    # VAD_UNKNOWN keeps the original file: an unreadable probe is not a verdict.
+    source = speech if verdict == VAD_SPEECH else wav
     repo = model if "/" in model else _MLX_MODELS.get(model, model)
     try:
         result = mlx_whisper.transcribe(
-            wav, path_or_hf_repo=repo,
+            source, path_or_hf_repo=repo,
             language=(lang if lang and lang != "auto" else None),
             condition_on_previous_text=False)
     except Exception as e:  # bad repo, download failure, OOM — another backend may work
         print(f"  ! mlx-whisper failed (model={model} -> {repo}): {e}")
         return GATE_ERROR, None
-    segs = [{"start": round(float(s.get("start", 0)), 3),
-             "end": round(float(s.get("end", 0)), 3),
+    segs = [{"start": float(s.get("start", 0)),
+             "end": float(s.get("end", 0)),
              "text": (s.get("text") or "").strip()}
             for s in (result.get("segments") or []) if (s.get("text") or "").strip()]
+    if tsmap is not None:
+        # Times above are on the collapsed speech-only timeline; put them back.
+        for s in segs:
+            s["start"] = tsmap.get_original_time(s["start"])
+            s["end"] = tsmap.get_original_time(s["end"], is_end=True)
+    for s in segs:
+        s["start"], s["end"] = round(s["start"], 3), round(s["end"], 3)
     if not segs:
         return GATE_NO_SIGNAL, None
     _write_transcript_json(out_dir, segs)
