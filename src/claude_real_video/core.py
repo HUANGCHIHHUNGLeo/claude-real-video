@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 # Markers fencing the untrusted transcript inside MANIFEST.txt. Kept module-level
 # so callers that parse the manifest can find the boundary without hardcoding it.
@@ -1093,33 +1094,96 @@ GATE_ERROR = "error"          # engine unavailable/crashed — fallback may run
 _last_run_no_speech = False
 
 
-VAD_SPEECH = "speech"      # speech found; `audio` holds it with the silence removed
-VAD_SILENT = "silent"      # the gate ran and heard no speech at all
-VAD_UNKNOWN = "unknown"    # the audio could not be read — not evidence of silence
+VAD_SPEECH = "speech"          # speech found; .audio holds it with the silence removed
+VAD_SILENT = "silent"          # the gate ran and heard no speech at all
+VAD_FAILED = "failed"          # the gate itself broke (ONNX/Silero) — no verdict to trust
+VAD_UNREADABLE = "unreadable"  # the *file* could not be decoded — not evidence of silence
+
+# SpeechTimestampsMap.get_original_time only grew its is_end argument in
+# faster-whisper 1.2.0; on 1.1.x the call below is a TypeError. Checked rather
+# than caught so the failure names the real cause.
+_VAD_MIN_FASTER_WHISPER = (1, 2)
 
 
-def _vad_speech_audio(wav: str):
+class _VadGate(NamedTuple):
+    """What the Silero pre-gate learned about a file. `audio` is the speech with
+    the silence cut out, `tsmap` maps that collapsed timeline back to the original
+    one, and `duration` is the original length in seconds (for bounds-checking the
+    restored timestamps)."""
+    verdict: str
+    audio: object | None = None
+    tsmap: object | None = None
+    duration: float = 0.0
+
+
+def _vad_speech_audio(wav: str) -> _VadGate:
     """Silero-gate `wav` down to just its speech, the way faster-whisper's
-    vad_filter does: return (VAD_SPEECH, audio, tsmap) where `audio` is 16kHz mono
-    holding only the speech chunks — the non-speech stretches whisper hallucinates
-    captions over are physically gone — and `tsmap` puts the resulting timestamps
-    back on the original timeline. (VAD_SILENT, None, None) when the file holds no
-    speech, (VAD_UNKNOWN, None, None) when it could not be decoded. Silero ships
-    inside faster-whisper, so an absent faster-whisper raises ImportError for the
-    caller to decide on."""
+    vad_filter does — the non-speech stretches whisper hallucinates captions over
+    are physically gone before the engine ever sees the audio.
+
+    The two failure verdicts are deliberately different. VAD_FAILED (Silero/ONNX
+    threw) means we have no opinion about this file and must not pretend we do —
+    the caller gives up so the chain reaches a backend that gates itself.
+    VAD_UNREADABLE (the decode threw) is not a gate failure: the file crv passes in
+    is one ffmpeg just wrote, so this means a broken/empty wav that every backend
+    is about to fail on too — refusing there would cost a transcript without
+    buying any hallucination safety, so the engine still gets its turn.
+
+    Silero ships inside faster-whisper, so an absent (or too old) faster-whisper
+    raises ImportError for the caller to decide on."""
     import numpy as np
+    import faster_whisper
     from faster_whisper.audio import decode_audio
     from faster_whisper.vad import SpeechTimestampsMap, VadOptions, get_speech_timestamps
+    have = tuple(int(n) for n in
+                 re.findall(r"\d+", getattr(faster_whisper, "__version__", "0"))[:2] or [0])
+    if have < _VAD_MIN_FASTER_WHISPER:
+        raise ImportError(
+            f"faster-whisper {'.'.join(map(str, have))} is too old for the mlx VAD "
+            f"pre-gate; need >= {'.'.join(map(str, _VAD_MIN_FASTER_WHISPER))}")
     try:
         audio = decode_audio(wav, sampling_rate=16000)
-        chunks = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=500))
     except Exception as e:
         print(f"  ! VAD pre-gate could not read {os.path.basename(wav)}: {e}")
-        return VAD_UNKNOWN, None, None
+        return _VadGate(VAD_UNREADABLE)
+    try:
+        chunks = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=500))
+    except Exception as e:
+        print(f"  ! VAD pre-gate failed on {os.path.basename(wav)}: {e}")
+        return _VadGate(VAD_FAILED)
+    duration = len(audio) / 16000
     if not chunks:
-        return VAD_SILENT, None, None
+        return _VadGate(VAD_SILENT, duration=duration)
     speech = np.concatenate([audio[c["start"]:c["end"]] for c in chunks])
-    return VAD_SPEECH, speech, SpeechTimestampsMap(chunks, 16000)
+    return _VadGate(VAD_SPEECH, speech, SpeechTimestampsMap(chunks, 16000), duration)
+
+
+def _restore_segment_times(segs: list[dict], tsmap, duration: float) -> list[dict]:
+    """Put segment times cut on the collapsed speech-only timeline back on the
+    original one, then hold them to 0 <= start < end <= duration. Whisper's own
+    times can overshoot the window it was reading, and past a seam that overshoot
+    lands in the wrong chunk, so the bounds are checked rather than assumed.
+    Rounding happens once, here, at the 3dp this module's transcript.json uses —
+    SpeechTimestampsMap's own 2dp step is faster-whisper's, shared with the
+    faster-whisper path so both backends report times the same way."""
+    kept = []
+    for s in segs:
+        if tsmap is not None:
+            s["start"] = tsmap.get_original_time(s["start"])
+            s["end"] = tsmap.get_original_time(s["end"], is_end=True)
+        start = max(s["start"], 0.0)
+        end = max(s["end"], start)
+        if duration > 0:
+            start, end = min(start, duration), min(end, duration)
+        if end <= start:
+            if duration > 0 and start >= duration:
+                print(f"  ! dropping a segment restored past the end of the audio: "
+                      f"{s['text'][:40]!r}")
+                continue
+            end = start + 0.001 if duration <= 0 else min(duration, start + 0.001)
+        s["start"], s["end"] = round(start, 3), round(end, 3)
+        kept.append(s)
+    return kept
 
 
 def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
@@ -1175,20 +1239,23 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
     # "I'll see you next time"). So gate the same way — Silero VAD first, no speech
     # chunks -> GATE_NO_SIGNAL, a terminal verdict, mlx never runs.
     try:
-        verdict, speech, tsmap = _vad_speech_audio(wav)
-    except ImportError:
-        # Silero ships inside faster-whisper, which [mlx] depends on. Missing it
-        # means a hand-assembled env; refuse rather than transcribe ungated.
-        print("  ! mlx-whisper needs faster-whisper for its VAD pre-gate "
-              "(pip install 'claude-real-video[mlx]') — skipping mlx backend")
+        gate = _vad_speech_audio(wav)
+    except ImportError as e:
+        # Silero ships inside faster-whisper, which [mlx] depends on. Missing or
+        # too old means a hand-assembled env; refuse rather than transcribe ungated.
+        print(f"  ! mlx-whisper needs faster-whisper >= 1.2 for its VAD pre-gate "
+              f"(pip install 'claude-real-video[mlx]'): {e} — skipping mlx backend")
         return GATE_ERROR, None
-    if verdict == VAD_SILENT:
+    if gate.verdict == VAD_SILENT:
         # The gate ran and found NO speech — terminal, exactly as on the
         # faster-whisper path. Handing the file to mlx anyway would reintroduce
         # the hallucination this gate exists to prevent.
         return GATE_NO_SIGNAL, None
-    # VAD_UNKNOWN keeps the original file: an unreadable probe is not a verdict.
-    source = speech if verdict == VAD_SPEECH else wav
+    if gate.verdict == VAD_FAILED:
+        # No working gate, so no mlx: hand the file on to a backend that brings
+        # its own (faster-whisper), rather than transcribing it unguarded here.
+        return GATE_ERROR, None
+    source = gate.audio if gate.verdict == VAD_SPEECH else wav
     repo = model if "/" in model else _MLX_MODELS.get(model, model)
     try:
         result = mlx_whisper.transcribe(
@@ -1202,15 +1269,18 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
              "end": float(s.get("end", 0)),
              "text": (s.get("text") or "").strip()}
             for s in (result.get("segments") or []) if (s.get("text") or "").strip()]
-    if tsmap is not None:
-        # Times above are on the collapsed speech-only timeline; put them back.
-        for s in segs:
-            s["start"] = tsmap.get_original_time(s["start"])
-            s["end"] = tsmap.get_original_time(s["end"], is_end=True)
-    for s in segs:
-        s["start"], s["end"] = round(s["start"], 3), round(s["end"], 3)
+    spoke = bool(segs)
+    try:
+        segs = _restore_segment_times(segs, gate.tsmap, gate.duration)
+    except Exception as e:
+        # A timeline we cannot trust is worse than no transcript from this backend:
+        # wrong timestamps would silently mis-anchor frames and the KB.
+        print(f"  ! mlx-whisper could not restore timestamps past the VAD gate: {e}")
+        return GATE_ERROR, None
     if not segs:
-        return GATE_NO_SIGNAL, None
+        # Nothing transcribed is a no-speech verdict; everything thrown away by the
+        # bounds check is a broken timeline, and must not masquerade as one.
+        return (GATE_ERROR if spoke else GATE_NO_SIGNAL), None
     _write_transcript_json(out_dir, segs)
     dst = os.path.join(out_dir, "transcript.txt")
     with open(dst, "w", encoding="utf-8") as f:

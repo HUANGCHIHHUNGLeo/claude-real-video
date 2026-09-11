@@ -10,6 +10,10 @@ dist/
 crv-out/
 *.mp4
 *.wav
+
+# ...except the committed test fixtures: the mlx VAD tests need a real speech
+# sample, and generating one at test time would tie them to macOS `say`.
+!tests/fixtures/*.wav
 *.jpg
 !docs/*.jpg
 .gstack/
