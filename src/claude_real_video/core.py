@@ -26,6 +26,26 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, errors="replace")
 
 
+
+def _ytdlp_upgrade_hint() -> str:
+    """One line to append to any download failure. Video sites change their
+    player checks every few months and a yt-dlp older than that quietly turns
+    into HTTP 403 / "Requested format is not available" — the fix is always
+    the same, so say it instead of making the user search for it."""
+    ver = "unknown"
+    try:
+        if _have("yt-dlp"):
+            ver = _run(["yt-dlp", "--version"]).stdout.strip() or ver
+        else:
+            import yt_dlp  # type: ignore
+            ver = getattr(yt_dlp.version, "__version__", ver)
+    except Exception:
+        pass
+    return (f"\nInstalled yt-dlp: {ver}. If this is a YouTube 403 or a format error, "
+            "the site changed and yt-dlp is behind — run:\n"
+            "  pip install -U 'yt-dlp[default,deno]'\nand try again.")
+
+
 def _have(tool: str) -> bool:
     return shutil.which(tool) is not None
 
@@ -316,7 +336,8 @@ def fetch_video(src: str, out_dir: str, cookies: str | None = None, cookies_from
             # Quote yt-dlp rather than guessing: 403, geo-block, "no video formats"
             # and members-only all land here, and only one of them is about cookies.
             raise RuntimeError("Download failed." + (f"\nyt-dlp said:\n{reason[-800:]}" if reason
-                               else " (private video? try --cookies your_cookies.txt)"))
+                               else " (private video? try --cookies your_cookies.txt)")
+                               + _ytdlp_upgrade_hint())
     else:
         if not os.path.exists(src):
             raise FileNotFoundError(src)

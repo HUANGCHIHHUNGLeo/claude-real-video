@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-real-video"
-version = "0.10.3"
+version = "0.10.4"
 description = "Let Claude (or any LLM) actually watch a video — scene-aware, deduplicated frames + transcript, from a URL or local file."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,7 +18,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-  "yt-dlp[default,deno]>=2026.7.4",  # 2026.07+ needed for YouTube's EJS n-challenge; [deno] bundles the JS runtime so URL downloads work with zero setup
+  "yt-dlp[default,deno]>=2026.8.19",  # YouTube changed player checks again in Aug 2026: 2026.07.x gets HTTP 403 on video data; [deno] bundles the JS runtime so URL downloads work with zero setup
   "Pillow>=9.0.0",
 ]
 
