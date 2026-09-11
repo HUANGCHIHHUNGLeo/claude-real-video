@@ -1,3 +1,14 @@
+## 0.10.4 — 2026-09-11
+
+- **yt-dlp floor raised to 2026.8.19.** YouTube changed its player checks
+  again in August; a 2026.07.x yt-dlp still reads titles and captions but
+  gets HTTP 403 on the video itself, which surfaced as a bare "Download
+  failed". Upgrading `claude-real-video` now pulls the fixed yt-dlp.
+- **The download error tells you what to do.** Every download failure now
+  ends with the installed yt-dlp version and the one-line fix
+  (`pip install -U 'yt-dlp[default,deno]'`), so an out-of-date yt-dlp is
+  diagnosed on the spot instead of looking like a private video.
+
 ## 0.10.3 — 2026-08-31
 
 - **The caption file's header no longer opens the transcript.** A platform
