@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 # Markers fencing the untrusted transcript inside MANIFEST.txt. Kept module-level
 # so callers that parse the manifest can find the boundary without hardcoding it.
@@ -1079,6 +1080,31 @@ def _have_faster_whisper() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def _have_mlx_whisper() -> bool:
+    """mlx-whisper runs Whisper on the Apple-Silicon GPU/ANE via Apple's MLX — much
+    faster than faster-whisper's CPU-only CTranslate2. Gated to arm64 macOS so a
+    Linux/Intel host never selects a backend it cannot run."""
+    import importlib.util
+    import platform
+    return (platform.system() == "Darwin" and platform.machine() == "arm64"
+            and importlib.util.find_spec("mlx_whisper") is not None)
+
+
+# crv's --whisper-model names -> mlx-community HF repos of Apple-Silicon weights.
+# A value already containing "/" is treated as an explicit repo and passed through.
+_MLX_MODELS = {
+    "tiny": "mlx-community/whisper-tiny-mlx",
+    "base": "mlx-community/whisper-base-mlx",
+    "small": "mlx-community/whisper-small-mlx",
+    "medium": "mlx-community/whisper-medium-mlx",
+    "large": "mlx-community/whisper-large-v3-mlx",
+    "large-v2": "mlx-community/whisper-large-v2-mlx",
+    "large-v3": "mlx-community/whisper-large-v3-mlx",
+    "turbo": "mlx-community/whisper-large-v3-turbo",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+
 # Gate verdicts for the VAD-gated engine. Typed statuses instead of a sentinel
 # (design credit: r/ClaudeAI feedback) — the fallback branch can only ever match
 # GATE_ERROR, so a valid empty result structurally cannot re-enter the ungated path.
@@ -1087,6 +1113,97 @@ GATE_NO_SIGNAL = "no_signal"  # engine ran fine, heard no speech — terminal ve
 GATE_ERROR = "error"          # engine unavailable/crashed — fallback may run
 # set by transcribe() so the manifest can say so instead of "(transcription failed)"
 _last_run_no_speech = False
+
+
+VAD_SPEECH = "speech"          # speech found; .audio holds it with the silence removed
+VAD_SILENT = "silent"          # the gate ran and heard no speech at all
+VAD_FAILED = "failed"          # the gate itself broke (ONNX/Silero) — no verdict to trust
+VAD_UNREADABLE = "unreadable"  # the *file* could not be decoded — no verdict either
+
+# SpeechTimestampsMap.get_original_time only grew its is_end argument in
+# faster-whisper 1.2.0; on 1.1.x the call below is a TypeError. Checked rather
+# than caught so the failure names the real cause.
+_VAD_MIN_FASTER_WHISPER = (1, 2)
+
+
+class _VadGate(NamedTuple):
+    """What the Silero pre-gate learned about a file. `audio` is the speech with
+    the silence cut out, `tsmap` maps that collapsed timeline back to the original
+    one, and `duration` is the original length in seconds (for bounds-checking the
+    restored timestamps)."""
+    verdict: str
+    audio: object | None = None
+    tsmap: object | None = None
+    duration: float = 0.0
+
+
+def _vad_speech_audio(wav: str) -> _VadGate:
+    """Silero-gate `wav` down to just its speech, the way faster-whisper's
+    vad_filter does — the non-speech stretches whisper hallucinates captions over
+    are physically gone before the engine ever sees the audio.
+
+    The two failure verdicts are reported apart so the log names what broke, but
+    neither is ever a pass: VAD_FAILED is Silero/ONNX throwing, VAD_UNREADABLE is
+    the decode throwing, and in both cases we have no opinion about this file and
+    must not pretend we do. Decoding here is PyAV's while mlx loads audio through
+    its own ffmpeg, so "we could not read it" says nothing about whether mlx
+    could — treating it as a free pass would be a hole straight through the gate.
+
+    Silero ships inside faster-whisper, so an absent (or too old) faster-whisper
+    raises ImportError for the caller to decide on."""
+    import numpy as np
+    import faster_whisper
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import SpeechTimestampsMap, VadOptions, get_speech_timestamps
+    have = tuple(int(n) for n in
+                 re.findall(r"\d+", getattr(faster_whisper, "__version__", "0"))[:2] or [0])
+    if have < _VAD_MIN_FASTER_WHISPER:
+        raise ImportError(
+            f"faster-whisper {'.'.join(map(str, have))} is too old for the mlx VAD "
+            f"pre-gate; need >= {'.'.join(map(str, _VAD_MIN_FASTER_WHISPER))}")
+    try:
+        audio = decode_audio(wav, sampling_rate=16000)
+    except Exception as e:
+        print(f"  ! VAD pre-gate could not read {os.path.basename(wav)}: {e}")
+        return _VadGate(VAD_UNREADABLE)
+    try:
+        chunks = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=500))
+    except Exception as e:
+        print(f"  ! VAD pre-gate failed on {os.path.basename(wav)}: {e}")
+        return _VadGate(VAD_FAILED)
+    duration = len(audio) / 16000
+    if not chunks:
+        return _VadGate(VAD_SILENT, duration=duration)
+    speech = np.concatenate([audio[c["start"]:c["end"]] for c in chunks])
+    return _VadGate(VAD_SPEECH, speech, SpeechTimestampsMap(chunks, 16000), duration)
+
+
+def _restore_segment_times(segs: list[dict], tsmap, duration: float) -> list[dict]:
+    """Put segment times cut on the collapsed speech-only timeline back on the
+    original one, then hold them to 0 <= start < end <= duration. Whisper's own
+    times can overshoot the window it was reading, and past a seam that overshoot
+    lands in the wrong chunk, so the bounds are checked rather than assumed.
+    Rounding happens once, here, at the 3dp this module's transcript.json uses —
+    SpeechTimestampsMap's own 2dp step is faster-whisper's, shared with the
+    faster-whisper path so both backends report times the same way."""
+    kept = []
+    for s in segs:
+        if tsmap is not None:
+            s["start"] = tsmap.get_original_time(s["start"])
+            s["end"] = tsmap.get_original_time(s["end"], is_end=True)
+        start = max(s["start"], 0.0)
+        end = max(s["end"], start)
+        if duration > 0:
+            start, end = min(start, duration), min(end, duration)
+        if end <= start:
+            if duration > 0 and start >= duration:
+                print(f"  ! dropping a segment restored past the end of the audio: "
+                      f"{s['text'][:40]!r}")
+                continue
+            end = start + 0.001 if duration <= 0 else min(duration, start + 0.001)
+        s["start"], s["end"] = round(start, 3), round(end, 3)
+        kept.append(s)
+    return kept
 
 
 def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
@@ -1119,6 +1236,75 @@ def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: 
         # Falling back to the ungated CLI here would reintroduce the exact
         # hallucination this path exists to prevent.
         return GATE_NO_SIGNAL, None
+    _write_transcript_json(out_dir, segs)
+    dst = os.path.join(out_dir, "transcript.txt")
+    with open(dst, "w", encoding="utf-8") as f:
+        f.write("\n".join(s["text"] for s in segs) + "\n")
+    return GATE_ACCEPTED, dst
+
+
+def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
+    """Apple-Silicon GPU transcription via mlx-whisper — same output files as the
+    other backends (transcript.txt + transcript.json), on the Mac GPU/ANE. Returns a
+    GATE_* verdict + path; GATE_ERROR lets the caller fall back to another backend.
+    condition_on_previous_text=False cuts whisper's repetition-loop failure mode
+    (matching the faster-whisper path)."""
+    try:
+        import mlx_whisper
+    except ImportError:
+        return GATE_ERROR, None
+    # mlx-whisper has no VAD of its own. Running it ungated would reintroduce the
+    # exact failure the faster-whisper path exists to prevent: whisper inventing a
+    # caption over silence/music (observed: an 8s music-only clip yielding
+    # "I'll see you next time"). So gate the same way — Silero VAD first, no speech
+    # chunks -> GATE_NO_SIGNAL, a terminal verdict, mlx never runs. Nothing but a
+    # clean VAD_SPEECH verdict gets mlx started: no gate, no transcription.
+    try:
+        gate = _vad_speech_audio(wav)
+    except ImportError as e:
+        # Silero ships inside faster-whisper, which [mlx] depends on. Missing or
+        # too old means a hand-assembled env; refuse rather than transcribe ungated.
+        print(f"  ! mlx-whisper needs faster-whisper >= 1.2 for its VAD pre-gate "
+              f"(pip install 'claude-real-video[mlx]'): {e} — skipping mlx backend")
+        return GATE_ERROR, None
+    if gate.verdict == VAD_SILENT:
+        # The gate ran and found NO speech — terminal, exactly as on the
+        # faster-whisper path. Handing the file to mlx anyway would reintroduce
+        # the hallucination this gate exists to prevent.
+        return GATE_NO_SIGNAL, None
+    if gate.verdict != VAD_SPEECH:
+        # Gate broken (VAD_FAILED) or audio undecodable (VAD_UNREADABLE): either
+        # way there is no verdict, so mlx does not run. Fail closed — PyAV failing
+        # to decode is no evidence that mlx's own ffmpeg loader will, and letting
+        # it try anyway would be an ungated transcription, the one thing this
+        # gate exists to prevent. The chain falls to faster-whisper, which brings
+        # its own vad_filter.
+        return GATE_ERROR, None
+    repo = model if "/" in model else _MLX_MODELS.get(model, model)
+    try:
+        result = mlx_whisper.transcribe(
+            gate.audio, path_or_hf_repo=repo,
+            language=(lang if lang and lang != "auto" else None),
+            condition_on_previous_text=False)
+    except Exception as e:  # bad repo, download failure, OOM — another backend may work
+        print(f"  ! mlx-whisper failed (model={model} -> {repo}): {e}")
+        return GATE_ERROR, None
+    segs = [{"start": float(s.get("start", 0)),
+             "end": float(s.get("end", 0)),
+             "text": (s.get("text") or "").strip()}
+            for s in (result.get("segments") or []) if (s.get("text") or "").strip()]
+    spoke = bool(segs)
+    try:
+        segs = _restore_segment_times(segs, gate.tsmap, gate.duration)
+    except Exception as e:
+        # A timeline we cannot trust is worse than no transcript from this backend:
+        # wrong timestamps would silently mis-anchor frames and the KB.
+        print(f"  ! mlx-whisper could not restore timestamps past the VAD gate: {e}")
+        return GATE_ERROR, None
+    if not segs:
+        # Nothing transcribed is a no-speech verdict; everything thrown away by the
+        # bounds check is a broken timeline, and must not masquerade as one.
+        return (GATE_ERROR if spoke else GATE_NO_SIGNAL), None
     _write_transcript_json(out_dir, segs)
     dst = os.path.join(out_dir, "transcript.txt")
     with open(dst, "w", encoding="utf-8") as f:
@@ -1190,7 +1376,7 @@ def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "b
     """Optional: extract audio + transcribe. Prefers faster-whisper when the
     package is installed (pip install 'claude-real-video[fast]'), then in-process
     openai-whisper, and finally the `whisper` CLI."""
-    if not _have("whisper") and not _whisper_available() and not _have_faster_whisper():
+    if not _have("whisper") and not _whisper_available() and not _have_faster_whisper() and not _have_mlx_whisper():
         return None
     # audio.wav is a 16kHz mono *working file* for whisper only — the user-facing
     # keep_audio artifact is audio.m4a (extract_full_audio), so this one is
@@ -1206,12 +1392,23 @@ def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "b
     try:
         global _last_run_no_speech
         _last_run_no_speech = False
-        status, fast = _transcribe_faster_whisper(wav, out_dir, lang, model)
-        if status == GATE_ACCEPTED:
-            return fast
-        if status == GATE_NO_SIGNAL:
-            _last_run_no_speech = True
-            return None
+        # Prefer mlx-whisper on Apple Silicon (GPU/ANE, several× faster than
+        # faster-whisper's CPU-only CTranslate2), then faster-whisper (CPU), then the
+        # openai-whisper CLI fallback below. Each returns a GATE_* verdict:
+        # GATE_ACCEPTED wins; GATE_NO_SIGNAL is a terminal "no speech"; GATE_ERROR
+        # (backend missing/crashed) falls through to the next backend.
+        _backends = []
+        if _have_mlx_whisper():
+            _backends.append(_transcribe_mlx_whisper)
+        if _have_faster_whisper():
+            _backends.append(_transcribe_faster_whisper)
+        for _backend in _backends:
+            status, path = _backend(wav, out_dir, lang, model)
+            if status == GATE_ACCEPTED:
+                return path
+            if status == GATE_NO_SIGNAL:
+                _last_run_no_speech = True
+                return None
         # GATE_ERROR is the only status allowed to reach the ungated CLI fallback
         if not _have("whisper"):
             # No console script on PATH: on an isolated install the package is
@@ -1436,7 +1633,7 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         # Check for audio *before* blaming a missing whisper install — a silent
         # video would otherwise tell the user to go install whisper for nothing.
         note = "(none — this video has no subtitles and no audio track)"
-    elif not _have("whisper") and not _whisper_available() and not _have_faster_whisper():
+    elif not _have("whisper") and not _whisper_available() and not _have_faster_whisper() and not _have_mlx_whisper():
         note = "(none — no existing subtitles; install a transcriber: pip install 'claude-real-video[fast]' or pip install openai-whisper)"
     else:
         transcript = transcribe(video, out_dir, lang, model=whisper_model,
