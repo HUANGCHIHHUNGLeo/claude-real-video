@@ -36,6 +36,8 @@ Then paste a video link into your agent and ask about it. (CLI-only use? `crv "<
 
 > **This free version lets your AI *see* the video.** [crv Pro](https://leoaido.com/crv-pro/) lets it *understand* it — how it was shot (cut rhythm, camera moves) plus a timestamped timeline of what frames can't show: gestures, expressions, voice pitch shifts, emotion, sound events. One-time price $29 — [get it on Capafy](https://capafy.ai/agent/llm-real-video-pro-let-any-llm-watch-videos/5451082151) or [buy with card via Lemon Squeezy](https://leoaido.lemonsqueezy.com/checkout/buy/ff552000-adc0-49f1-8eec-5e8ada1905a1).
 
+> **On Codex CLI?** [Real Video for Codex](https://capafy.ai/agent/real-video-for-codex/3594524971) is a self-contained build for it: the same scene-aware keyframes and transcript, plus **on-screen text recognition**, which this free edition deliberately leaves out. So Codex can quote the config a speaker put on screen at 12:40, not only what they said about it. Ships as a wheel with a `doctor` self-check; Python 3.10–3.14, macOS or Windows 11 native. One-time price $9.90.
+
 Most AI tools don't really *see* a video. Paste a YouTube link into ChatGPT and it
 reads the **transcript**, not the picture. Claude won't take a video file at all.
 Even Gemini, which *can* read video natively, has to send it up to Google and
