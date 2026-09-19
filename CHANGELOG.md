@@ -1,3 +1,16 @@
+## 0.10.6 — 2026-09-19
+
+- **A `--from`/`--to` window no longer scans the whole file.** The slow-motion
+  check ran ffmpeg over every frame of the source regardless of the window, while
+  every other stage honoured it. Analysing a 3-minute window of a 19-minute talk
+  spent 347 s of a 350 s run inside that one check. The same command now takes
+  77 s instead of 369 s on the same machine, with byte-identical output: same 93
+  keyframes, same 39-line transcript.
+- **The hint now describes the part you analysed.** Because the scan follows the
+  window, the padded-slow-motion hint reflects the analysed span rather than
+  statistics gathered from footage outside it. This is a behaviour change, not
+  only a speed fix.
+
 ## 0.10.5 — 2026-09-11
 
 - **Apple Silicon GPU transcription** (#28, by @blazejp83). A new `[mlx]`

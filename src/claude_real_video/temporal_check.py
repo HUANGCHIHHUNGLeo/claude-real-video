@@ -19,8 +19,11 @@ import subprocess
 import statistics
 
 
-def temporal_hint(video_path, ffmpeg="ffmpeg"):
+def temporal_hint(video_path, ffmpeg="ffmpeg", start=None, end=None):
     """Return a one-line hint string, or None when no strong evidence.
+
+    `start`/`end` restrict the scan to the analysed window, matching the rest of
+    the pipeline. The hint then describes the part that was actually analysed.
 
     Free tier deliberately reports ONLY padded slow-motion. The interval-capture
     signal was tested and dropped here: fast-action wild footage (sports reels,
@@ -29,8 +32,17 @@ def temporal_hint(video_path, ffmpeg="ffmpeg"):
     real 8x lapse 5.7). Detecting it safely needs the Pro multi-channel analysis.
     """
     try:
+        # Only the analysed window reaches the scan. Without this the whole file is
+        # decoded frame by frame even for a short --from/--to window, which on a
+        # 19-minute source cost 347s of a 350s run (measured 2026-09-19) while every
+        # other stage honoured the window.
+        pre = []
+        if start:
+            pre += ["-ss", f"{start:.3f}"]
+        if end is not None:
+            pre += ["-t", f"{end - (start or 0.0):.3f}"]
         proc = subprocess.run(
-            [ffmpeg, "-i", video_path, "-vf",
+            [ffmpeg, *pre, "-i", video_path, "-vf",
              "signalstats,metadata=print:key=lavfi.signalstats.YDIF:file=-",
              "-f", "null", "-"],
             capture_output=True, text=True, errors="replace", timeout=600)

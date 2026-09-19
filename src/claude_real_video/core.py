@@ -1682,7 +1682,7 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
     # simple temporal check (free tier): one conservative line, only when confident
     try:
         from .temporal_check import temporal_hint
-        _hint = temporal_hint(video)
+        _hint = temporal_hint(video, start=start, end=end)
         if _hint:
             lines.append(_hint)
     except Exception:
