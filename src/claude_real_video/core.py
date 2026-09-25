@@ -47,6 +47,15 @@ def _ytdlp_upgrade_hint() -> str:
             "  pip install -U 'yt-dlp[default,deno]'\nand try again.")
 
 
+def _subtitle_fetch_failed(err: str) -> bool:
+    """True when yt-dlp's complaint was about fetching subtitles, not the video.
+
+    Platforms rate-limit caption endpoints far harder than media, so a 429 here
+    is routine. Captions are an optimisation over Whisper, never a requirement.
+    """
+    return "download video subtitles" in (err or "").lower()
+
+
 def _have(tool: str) -> bool:
     return shutil.which(tool) is not None
 
@@ -138,6 +147,13 @@ def _download_via_ytdlp_api(src: str, dest: str, cookies: str | None,
     base.update(extra)
     # same order as the command-line path: only reach for cookies if a plain fetch fails
     attempts = [base]
+    # ...and, as there, a caption failure must not sink the video. Retry without
+    # the subtitle request before spending the cookie attempts on the same error.
+    if sub_lang:
+        no_subs = {k: v for k, v in base.items()
+                   if k not in ("writesubtitles", "writeautomaticsub", "subtitleslangs")}
+        attempts.append(no_subs)
+        base = no_subs
     if cookies_from_browser:
         attempts.append({**base, "cookiesfrombrowser": _browser_cookie_spec(cookies_from_browser)})
     if cookies:
@@ -306,10 +322,19 @@ def fetch_video(src: str, out_dir: str, cookies: str | None = None, cookies_from
         # yt-dlp is still importable there, so use its Python API instead.
         if _have("yt-dlp"):
             base = ["yt-dlp", src, "-o", dest, "--merge-output-format", "mp4", "--no-warnings", "-q"]
-            if sub_lang:
-                base += ["--write-subs", "--write-auto-subs", "--sub-langs", sub_lang]
-            base += list(ytdlp_args or [])   # last wins, same as yt-dlp on the command line
+            subs = (["--write-subs", "--write-auto-subs", "--sub-langs", sub_lang]
+                    if sub_lang else [])
+            extra = list(ytdlp_args or [])   # last wins, same as yt-dlp on the command line
+            without_subs = base + extra
+            base = base + subs + extra
             errors = [_run(base).stderr]
+            # A caption fetch that 429s must not sink the video: Whisper is the
+            # fallback, but it never saw a file because the subtitle flags rode
+            # along on the cookie retries below, so every attempt failed alike.
+            # Rebind base so those retries stop asking for captions too.
+            if not os.path.exists(dest) and subs and _subtitle_fetch_failed(errors[-1]):
+                base = without_subs
+                errors.append(_run(base).stderr)
             if not os.path.exists(dest) and cookies_from_browser:
                 errors.append(_run(base + ["--cookies-from-browser", cookies_from_browser]).stderr)
             if not os.path.exists(dest) and cookies:
