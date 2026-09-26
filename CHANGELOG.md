@@ -1,3 +1,14 @@
+## 0.10.7 — 2026-09-26
+
+- **A caption 429 no longer fails the whole download** (#29, by @Kikobazz123).
+  crv asks the platform for its own captions before fetching the video, and
+  platforms rate-limit caption endpoints far harder than media. A 429 there
+  used to abort the run, and because the subtitle flags rode along on every
+  cookie retry, Whisper never received a file to fall back on. The download
+  now retries without the caption request first, on both the CLI and the
+  Python-API paths, so the video still arrives and Whisper takes over as
+  documented. Three new tests cover the fallback.
+
 ## 0.10.6 — 2026-09-19
 
 - **A `--from`/`--to` window no longer scans the whole file.** The slow-motion
