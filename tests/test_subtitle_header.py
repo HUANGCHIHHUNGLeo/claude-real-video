@@ -64,6 +64,46 @@ def test_srt_is_unchanged(tmp_path):
     assert _text(tmp_path, SRT, "sidecar.srt") == "Hello world\nSecond line\n"
 
 
+def test_digit_only_cue_text_is_kept_and_indices_are_not(tmp_path):
+    """A line of digits after a timecode is the caption, not the next index.
+
+    The index is the digit line *between* cues. Dropping every all-digit line
+    once a cue has been seen also deletes a code, a year, or a countdown that
+    is the whole cue — and a second line of the same cue that is only a number.
+    """
+    body = """1
+00:00:01,000 --> 00:00:02,000
+The code is
+
+2
+00:00:02,000 --> 00:00:03,500
+4821
+
+3
+00:00:04,000 --> 00:00:05,000
+pin
+90210
+
+4
+00:00:06,000 --> 00:00:07,000
+remember it
+"""
+    assert _text(tmp_path, body, "code.srt") == (
+        "The code is\n4821\npin\n90210\nremember it\n")
+
+
+def test_vtt_digit_only_cue_is_kept(tmp_path):
+    body = """WEBVTT
+
+00:00:01.000 --> 00:00:02.000
+3
+
+00:00:02.000 --> 00:00:03.000
+go
+"""
+    assert _text(tmp_path, body, "count.vtt") == "3\ngo\n"
+
+
 def test_a_file_with_no_cues_yields_nothing(tmp_path):
     src = tmp_path / "headers_only.vtt"
     src.write_text("WEBVTT\nKind: captions\nLanguage: en\n", encoding="utf-8")
