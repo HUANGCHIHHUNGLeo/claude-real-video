@@ -165,6 +165,7 @@ When a user shares a video (URL or file path):
 | `--adaptive` | off | Adaptive scene detection for slow-changing content |
 | `--text-anchors` | off | Force frames at subtitle-cue timestamps — needs a sidecar `.srt`/`.vtt` or embedded subtitle track (burned-in captions can't be detected) |
 | `--lang` | `auto` | Whisper language (`en`, `zh`, `auto`, etc.) |
+| `--prompt TEXT` / `--prompt-file FILE` | — | Vocabulary hint for Whisper (names, jargon, product terms) so they are spelled right in the transcript |
 | `--cookies` | — | Netscape cookie file for login-gated sources |
 | `--cookies-from-browser` | — | Read cookies from browser (`chrome`, `safari`, `firefox`, `edge`) |
 | `--no-transcribe` | off | Skip audio transcription |
