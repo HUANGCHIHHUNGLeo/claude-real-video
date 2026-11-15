@@ -115,3 +115,13 @@ def test_cli_prompt_file_and_conflict(tmp_path):
     missing = subprocess.run(common + ["--prompt-file", str(tmp_path / "nope.txt")],
                              capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert missing.returncode == 2 and "--prompt-file" in missing.stderr
+
+
+def test_cli_prompt_file_not_utf8(tmp_path):
+    vocab = tmp_path / "vocab-utf16.txt"
+    vocab.write_text("gasket\n", encoding="utf-16")  # BOM + NULs: not valid UTF-8
+    r = subprocess.run([sys.executable, "-m", "claude_real_video", str(tmp_path / "missing.mp4"),
+                        "-o", str(tmp_path / "out"), "--prompt-file", str(vocab)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 2 and "--prompt-file" in r.stderr
+    assert "Traceback" not in r.stderr

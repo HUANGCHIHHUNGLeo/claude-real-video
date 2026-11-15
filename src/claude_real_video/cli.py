@@ -128,7 +128,7 @@ def main() -> None:
         try:
             with open(args.prompt_file, encoding="utf-8") as f:
                 args.prompt = " ".join(f.read().split()) or None
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             ap.error(f"--prompt-file: {e}")
 
     # Watched this exact source before? Say so instead of silently redoing the
