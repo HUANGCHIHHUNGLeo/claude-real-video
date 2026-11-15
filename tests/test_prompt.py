@@ -125,3 +125,46 @@ def test_cli_prompt_file_not_utf8(tmp_path):
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert r.returncode == 2 and "--prompt-file" in r.stderr
     assert "Traceback" not in r.stderr
+
+
+def _run_cli(args, env=None):
+    return subprocess.run([sys.executable, "-m", "claude_real_video", *args],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env)
+
+
+def test_cli_empty_prompt_values_are_still_validated(tmp_path):
+    vocab = tmp_path / "vocab.txt"
+    vocab.write_text("gasket\n", encoding="utf-8")
+    base = [str(tmp_path / "missing.mp4"), "-o", str(tmp_path / "out")]
+    # --prompt "" is still a supplied --prompt: the exclusion check applies
+    both = _run_cli(base + ["--prompt", "", "--prompt-file", str(vocab)])
+    assert both.returncode == 2 and "not both" in both.stderr
+    # --prompt-file "" is an unreadable file, not "no file"
+    empty = _run_cli(base + ["--prompt-file", ""])
+    assert empty.returncode == 2 and "--prompt-file" in empty.stderr
+
+
+def test_unchanged_rerun_without_prompt_still_hits_the_cache(tmp_path):
+    """No prompt -> the cache key is the pre---prompt key, so an unchanged
+    re-run answers "Already watched" instead of refusing the output dir."""
+    import shutil as _sh
+    if not (_sh.which("ffmpeg") and _sh.which("ffprobe")):
+        pytest.skip("ffmpeg not installed")
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i",
+                    "testsrc=duration=2:size=160x120:rate=5", str(src)],
+                   capture_output=True)
+    env = {**os.environ, "CRV_MEMORY_DB": str(tmp_path / "memory.db")}
+    env.pop("CRV_NO_MEMORY", None)
+    args = [str(src), "-o", str(tmp_path / "out"), "--no-transcribe"]
+    first = _run_cli(args, env)
+    assert first.returncode == 0, first.stdout + first.stderr
+    second = _run_cli(args, env)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "Already watched" in second.stdout
+
+    from claude_real_video import memory
+    import json
+    row = memory.lookup(str(src), db_path=tmp_path / "memory.db")
+    assert "prompt" not in json.loads(row["params"])

@@ -122,8 +122,10 @@ def main() -> None:
                     help="Also save the full original soundtrack (music + speech) as audio.m4a, "
                          "for models that can listen to audio (Gemini, GPT-4o, ...)")
     args = ap.parse_args()
-    if args.prompt_file:
-        if args.prompt:
+    # Compare against None, not truthiness: an empty value (a shell variable
+    # that expanded to "") is still a supplied flag and must be validated.
+    if args.prompt_file is not None:
+        if args.prompt is not None:
             ap.error("use either --prompt or --prompt-file, not both")
         try:
             with open(args.prompt_file, encoding="utf-8") as f:
@@ -147,8 +149,12 @@ def main() -> None:
         "keep_audio": args.keep_audio, "report": args.report, "why": args.why,
         "export": args.export, "grid": args.grid, "kb": args.kb, "viewer": args.viewer,
         "start": args.start, "end": args.end, "frame_width": args.frame_width,
-        "prompt": args.prompt,
     }
+    # Only when set: entries indexed before --prompt existed have no "prompt"
+    # key, and an unconditional "prompt": null would turn an unchanged re-run
+    # into a cache miss that then trips the non-empty output-dir refusal.
+    if args.prompt:
+        analysis_params["prompt"] = args.prompt
     if not args.overwrite and not os.environ.get("CRV_NO_MEMORY"):
         try:
             import json as _json
