@@ -116,6 +116,12 @@ crv long-meeting.mp4 --from 28:00 --to 43:00
 the whole file, the transcript and frame budget follow the window, and every reported
 timestamp is still a source timecode you can quote back to the original.
 
+## 中文說明
+
+讓 Claude（或其他 AI）真的看懂一支影片：把影片依畫面變化拆成關鍵畫面、去掉重複，再加上逐字稿，交給 AI 讀。可以直接貼 YouTube、Instagram Reel、TikTok 連結或本機影片檔，全部在你的電腦上處理，影片不會上傳。
+
+安裝：`pip install "claude-real-video[whisper]"`，需要先裝好 ffmpeg。完整中文介紹：https://leoaido.com/crv-pro/zh/
+
 ---
 
 ## Measured numbers
