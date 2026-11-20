@@ -937,18 +937,27 @@ def _subs_to_text(sub_path: str, out_txt: str) -> str | None:
         return None
     lines: list[str] = []
     seen_cue = False  # everything before the first timecode is file header
+    in_cue = False    # digit-only lines between cues are indices, not speech
     for ln in raw.splitlines():
         s = ln.strip().lstrip("﻿").strip()  # drop BOM if present
         if "-->" in s:
             seen_cue = True
+            in_cue = True
+            continue
+        if not s:
+            in_cue = False
             continue
         # WEBVTT header block: "WEBVTT", "Kind: captions", "Language: en",
         # NOTE/STYLE/REGION ... — none of it is spoken text.
-        if not seen_cue or not s or s.isdigit():
+        # A cue index is also all digits, but so is a caption whose whole line
+        # is a number ("4821", a countdown). Indices sit between cues; text
+        # after a timecode, including a later line of the same cue, is kept.
+        if not seen_cue or (s.isdigit() and not in_cue):
             continue
         s = re.sub(r"<[^>]+>", "", s)  # strip vtt inline tags like <v ->
         if s:
             lines.append(s)
+            in_cue = True
     text = "\n".join(lines).strip()
     if not text:
         return None
