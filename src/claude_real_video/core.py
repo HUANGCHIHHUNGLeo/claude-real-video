@@ -1642,7 +1642,9 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         frames_list = [{"file": r["name"], "timestamp_sec": float(r["t"]),
                         "selection_reason": r.get("via") or "scene"}
                        for r in records if r["kept"] and r.get("t") is not None]
-        llc = write_llc(out_dir, src, float(dur), frames_list)
+        # Pass the fetched file, not the original URL/path: highlights.llc and
+        # the media have to share a directory or lossless-cut cannot open it.
+        llc = write_llc(out_dir, video, float(dur), frames_list)
         if llc:
             print(f"  llc project: {llc} (open in lossless-cut — every scene is a segment)")
 
