@@ -66,6 +66,15 @@ def main() -> None:
                          "on first use). Transcript lines get [SPEAKER_00]-style prefixes; "
                          "needs: pip install 'claude-real-video[speakers]'")
     ap.add_argument("--lang", default="auto", help="Whisper language, e.g. en / zh / auto (default: auto)")
+    ap.add_argument("--prompt", "--initial-prompt", dest="prompt", default=None, metavar="TEXT",
+                    help="Vocabulary hint for Whisper: names, jargon and spellings the speech "
+                         "is likely to contain, e.g. --prompt \"Kubernetes, kubectl, etcd\". "
+                         "Biases the transcript toward those spellings; it is not an "
+                         "instruction. Applied to the whole clip on faster-whisper and "
+                         "openai-whisper >= 20250625, to the first 30 s on other backends. "
+                         "Ignored when the video's own subtitles are used")
+    ap.add_argument("--prompt-file", default=None, metavar="FILE",
+                    help="Read the --prompt text from a UTF-8 file (e.g. a project glossary)")
     ap.add_argument("--cookies", default=None,
                     help="Netscape cookie file for sites that need login (your own, authorised use only)")
     ap.add_argument("--cookies-from-browser", default=None, metavar="BROWSER",
@@ -113,6 +122,16 @@ def main() -> None:
                     help="Also save the full original soundtrack (music + speech) as audio.m4a, "
                          "for models that can listen to audio (Gemini, GPT-4o, ...)")
     args = ap.parse_args()
+    # Compare against None, not truthiness: an empty value (a shell variable
+    # that expanded to "") is still a supplied flag and must be validated.
+    if args.prompt_file is not None:
+        if args.prompt is not None:
+            ap.error("use either --prompt or --prompt-file, not both")
+        try:
+            with open(args.prompt_file, encoding="utf-8") as f:
+                args.prompt = " ".join(f.read().split()) or None
+        except (OSError, UnicodeDecodeError) as e:
+            ap.error(f"--prompt-file: {e}")
 
     # Watched this exact source before? Say so instead of silently redoing the
     # work. Without this the only signal was the "output dir is not empty"
@@ -131,6 +150,11 @@ def main() -> None:
         "export": args.export, "grid": args.grid, "kb": args.kb, "viewer": args.viewer,
         "start": args.start, "end": args.end, "frame_width": args.frame_width,
     }
+    # Only when set: entries indexed before --prompt existed have no "prompt"
+    # key, and an unconditional "prompt": null would turn an unchanged re-run
+    # into a cache miss that then trips the non-empty output-dir refusal.
+    if args.prompt:
+        analysis_params["prompt"] = args.prompt
     if not args.overwrite and not os.environ.get("CRV_NO_MEMORY"):
         try:
             import json as _json
@@ -163,6 +187,7 @@ def main() -> None:
             why=args.why, overwrite=args.overwrite, speakers=args.speakers,
             export=args.export,
             start=args.start, end=args.end, frame_width=args.frame_width,
+            prompt=args.prompt,
         )
     except Exception as e:  # noqa: BLE001 — surface a clean message to the user
         print(f"error: {e}", file=sys.stderr)

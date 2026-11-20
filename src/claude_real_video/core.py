@@ -1231,7 +1231,8 @@ def _restore_segment_times(segs: list[dict], tsmap, duration: float) -> list[dic
     return kept
 
 
-def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
+def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: str,
+                               prompt: str | None = None) -> tuple[str, str | None]:
     """In-process transcription via faster-whisper (CTranslate2) — same output
     files as the CLI path (transcript.txt + transcript.json), several times
     faster and lighter on RAM. Returns the transcript path, or None so the
@@ -1250,7 +1251,11 @@ def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: 
         seg_iter, _info = m.transcribe(
             wav, language=(lang if lang and lang != "auto" else None),
             vad_filter=True, vad_parameters={"min_silence_duration_ms": 500},
-            condition_on_previous_text=False)
+            condition_on_previous_text=False,
+            # --prompt goes in as hotwords, not initial_prompt: with
+            # condition_on_previous_text=False an initial_prompt only reaches the
+            # first 30 s window, while hotwords are prepended to every window.
+            **({"hotwords": prompt} if prompt else {}))
         segs = [{"start": round(s.start, 3), "end": round(s.end, 3), "text": s.text.strip()}
                 for s in seg_iter if s.text.strip()]
     except Exception as e:  # bad model name, OOM, corrupt audio — CLI may still work
@@ -1268,7 +1273,8 @@ def _transcribe_faster_whisper(wav: str, out_dir: str, lang: str | None, model: 
     return GATE_ACCEPTED, dst
 
 
-def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str) -> tuple[str, str | None]:
+def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str,
+                            prompt: str | None = None) -> tuple[str, str | None]:
     """Apple-Silicon GPU transcription via mlx-whisper — same output files as the
     other backends (transcript.txt + transcript.json), on the Mac GPU/ANE. Returns a
     GATE_* verdict + path; GATE_ERROR lets the caller fall back to another backend.
@@ -1310,7 +1316,8 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
         result = mlx_whisper.transcribe(
             gate.audio, path_or_hf_repo=repo,
             language=(lang if lang and lang != "auto" else None),
-            condition_on_previous_text=False)
+            condition_on_previous_text=False,
+            **({"initial_prompt": prompt} if prompt else {}))
     except Exception as e:  # bad repo, download failure, OOM — another backend may work
         print(f"  ! mlx-whisper failed (model={model} -> {repo}): {e}")
         return GATE_ERROR, None
@@ -1337,15 +1344,24 @@ def _transcribe_mlx_whisper(wav: str, out_dir: str, lang: str | None, model: str
     return GATE_ACCEPTED, dst
 
 
-def _transcribe_whisper_package(wav: str, out_dir: str, lang: str | None, model: str) -> str | None:
+def _transcribe_whisper_package(wav: str, out_dir: str, lang: str | None, model: str,
+                                prompt: str | None = None) -> str | None:
     """In-process openai-whisper, for installs where the package is importable but
     its console script is not on PATH (pipx / uv tool). Writes the same artifacts as
     the CLI path — transcript.txt one line per segment, plus transcript.json —
     and returns None on failure so the caller can still try the CLI."""
     try:
         import whisper
-        result = whisper.load_model(model).transcribe(
-            wav, language=(None if not lang or lang == "auto" else lang))
+        kw = {"language": (None if not lang or lang == "auto" else lang)}
+        if prompt:
+            kw["initial_prompt"] = prompt
+        wm = whisper.load_model(model)
+        try:
+            # carry_initial_prompt (openai-whisper >= 20250625) keeps the prompt on
+            # every 30 s window instead of only the first one.
+            result = wm.transcribe(wav, **kw, **({"carry_initial_prompt": True} if prompt else {}))
+        except TypeError:  # older openai-whisper: first window only
+            result = wm.transcribe(wav, **kw)
     except Exception as e:  # bad model name, OOM, a broken torch install, ...
         print(f"  ! whisper failed (model={model}): {e}")
         return None
@@ -1363,10 +1379,11 @@ def _transcribe_whisper_package(wav: str, out_dir: str, lang: str | None, model:
 
 
 def transcribe(video: str, out_dir: str, lang: str | None, model: str = "base",
-               start: float | None = None, end: float | None = None) -> str | None:
+               start: float | None = None, end: float | None = None,
+               prompt: str | None = None) -> str | None:
     """Transcribe (optionally only a window) and put cue times back on the source
     clock, so a windowed run quotes the same timecodes as a full run (issue #16)."""
-    path = _transcribe_impl(video, out_dir, lang, model, start, end)
+    path = _transcribe_impl(video, out_dir, lang, model, start, end, prompt=prompt)
     if start:
         _shift_transcript_artifacts(out_dir, start)
     return path
@@ -1397,7 +1414,8 @@ def _shift_transcript_artifacts(out_dir: str, start: float) -> None:
 
 
 def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "base",
-                     start: float | None = None, end: float | None = None) -> str | None:
+                     start: float | None = None, end: float | None = None,
+                     prompt: str | None = None) -> str | None:
     """Optional: extract audio + transcribe. Prefers faster-whisper when the
     package is installed (pip install 'claude-real-video[fast]'), then in-process
     openai-whisper, and finally the `whisper` CLI."""
@@ -1428,7 +1446,8 @@ def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "b
         if _have_faster_whisper():
             _backends.append(_transcribe_faster_whisper)
         for _backend in _backends:
-            status, path = _backend(wav, out_dir, lang, model)
+            status, path = _backend(wav, out_dir, lang, model,
+                                    **({"prompt": prompt} if prompt else {}))
             if status == GATE_ACCEPTED:
                 return path
             if status == GATE_NO_SIGNAL:
@@ -1438,12 +1457,14 @@ def _transcribe_impl(video: str, out_dir: str, lang: str | None, model: str = "b
         if not _have("whisper"):
             # No console script on PATH: on an isolated install the package is
             # still importable, so run it in-process rather than skipping speech.
-            return _transcribe_whisper_package(wav, out_dir, lang, model) if _whisper_available() else None
+            return _transcribe_whisper_package(wav, out_dir, lang, model, prompt=prompt) if _whisper_available() else None
         # json carries per-segment timestamps (saved as transcript.json); txt stays
         # the plain fallback. "all" writes both plus srt/vtt/tsv we clean up.
         cmd = ["whisper", wav, "--model", model, "--output_format", "all", "--output_dir", out_dir]
         if lang and lang != "auto":
             cmd += ["--language", lang]
+        if prompt:
+            cmd += ["--initial_prompt", prompt]
         res = _run(cmd)
         if res.returncode != 0:  # don't fail silently — say why (old whisper w/o turbo, OOM, ...)
             tail = (res.stderr or res.stdout or "").strip().splitlines()[-3:]
@@ -1578,7 +1599,7 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
             overwrite: bool = False, speakers: bool = False,
             export: str | None = None,
             start: str | float | None = None, end: str | float | None = None,
-            frame_width: int = 640) -> Result:
+            frame_width: int = 640, prompt: str | None = None) -> Result:
     if speakers:
         # fail fast — before any download/extraction work happens
         from .speakers import available as _speakers_available
@@ -1662,7 +1683,7 @@ def process(src: str, out_dir: str, *, scene: float = 0.30, fps_floor: float = 1
         note = "(none — no existing subtitles; install a transcriber: pip install 'claude-real-video[fast]' or pip install openai-whisper)"
     else:
         transcript = transcribe(video, out_dir, lang, model=whisper_model,
-                                start=start, end=end)
+                                start=start, end=end, prompt=prompt)
         note = (f"{transcript} (transcribed by whisper)" if transcript else
                 ("(none — the voice-activity gate heard no speech; music/ambient-only audio)"
                  if _last_run_no_speech else "(none — transcription failed)"))
